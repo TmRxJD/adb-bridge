@@ -90,10 +90,14 @@ jobs:
           # Run what the installer put on this machine, not the checkout: the
           # checkout has no node_modules in this job, and the installed copy is
           # the artifact under test.
-          $bridge = (Get-Command adb-bridge -ErrorAction SilentlyContinue).Source
-          if (-not $bridge) { throw 'adb-bridge was not installed globally by the installer' }
-          $p = Start-Process $bridge -PassThru -NoNewWindow `
-            -ArgumentList '--no-boot','--daemon' -RedirectStandardOutput serve.log
+          # npm installs both a POSIX shell script and a .cmd shim; Get-Command
+          # finds the extensionless one first, and Start-Process on that fails
+          # with "%1 is not a valid Win32 application". Go through cmd.
+          if (-not (Get-Command adb-bridge -ErrorAction SilentlyContinue)) {
+            throw 'adb-bridge was not installed globally by the installer'
+          }
+          $p = Start-Process cmd -PassThru -NoNewWindow `
+            -ArgumentList '/c','adb-bridge','--no-boot','--daemon' -RedirectStandardOutput serve.log
           Start-Sleep 10
           Get-Content serve.log -ErrorAction SilentlyContinue
           $bad = @()
