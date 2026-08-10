@@ -71,8 +71,9 @@ jobs:
           }
 
           $startup = Join-Path ([Environment]::GetFolderPath('Startup')) 'ADB Bridge.cmd'
-          $task = schtasks /Query /TN AdbBridge 2>$null
-          if (-not (Test-Path $startup) -and -not $task) {
+          schtasks /Query /TN AdbBridge 2>$null | Out-Null
+          $hasTask = ($LASTEXITCODE -eq 0)
+          if (-not (Test-Path $startup) -and -not $hasTask) {
             $fail += 'no autostart entry was created'
           }
 
@@ -83,6 +84,7 @@ jobs:
 
           if ($fail) { $fail | ForEach-Object { Write-Error $_ }; exit 1 }
           Write-Host 'install verified'
+          exit 0
 
       - name: Serve, and check the ports answer
         shell: pwsh
@@ -118,8 +120,12 @@ jobs:
           Start-Sleep 3
           $startup = Join-Path ([Environment]::GetFolderPath('Startup')) 'ADB Bridge.cmd'
           if (Test-Path $startup) { throw 'autostart entry survived uninstall' }
-          if (schtasks /Query /TN AdbBridge 2>$null) { throw 'scheduled task survived uninstall' }
+          schtasks /Query /TN AdbBridge 2>$null | Out-Null
+          if ($LASTEXITCODE -eq 0) { throw 'scheduled task survived uninstall' }
           Write-Host 'uninstall verified'
+          # schtasks exits 1 when the task is absent, which is the result we
+          # want here -- but pwsh would hand that 1 back as the step's status.
+          exit 0
 
       - uses: actions/upload-artifact@v4
         if: always()

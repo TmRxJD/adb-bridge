@@ -8,13 +8,20 @@ set -u
 
 log() { echo "[adb-bridge] $*"; }
 
-if ! command -v npm >/dev/null 2>&1; then
-  log "npm not found; the launcher will use npx"
-  exit 0
-fi
+# sudo's secure_path strips most of PATH, so a Node installed anywhere other
+# than /usr/bin is invisible to this script even though the user has it. Look
+# in the usual places before giving up -- the Windows installer had the same
+# blind spot and declared Node missing on machines that had it.
+for p in /usr/local/bin /opt/homebrew/bin "$HOME/.volta/bin" /usr/local/n/versions/node/*/bin; do
+  [ -d "$p" ] && export PATH="$p:$PATH"
+done
 
-npm install -g adb-bridge@latest --no-audit --no-fund --loglevel=error \
-  || log "global install failed; the launcher will use npx"
+if command -v npm >/dev/null 2>&1; then
+  npm install -g adb-bridge@latest --no-audit --no-fund --loglevel=error \
+    || log "global install failed; the launcher will use npx"
+else
+  log "npm not reachable from the package script; will try as the installing user"
+fi
 
 # Enable a game so the bridge has something to serve. Linux packaging has no
 # checkbox UI, so pick the default and say how to change it, rather than
@@ -36,15 +43,18 @@ fi
 TARGET_HOME="$(getent passwd "$TARGET_USER" | cut -d: -f6)"
 [ -z "$TARGET_HOME" ] && TARGET_HOME="/home/$TARGET_USER"
 
-# Resolve the binary here: sudo resets PATH, so a bare `adb-bridge` inside the
-# sudo call is not guaranteed to resolve even though it just installed.
-BRIDGE="$(command -v adb-bridge || true)"
-if [ -z "$BRIDGE" ]; then
-  log "adb-bridge is not on PATH yet; run 'adb-bridge games add thetower' to start."
-  exit 0
-fi
+# Run through the user's own login shell rather than this script's stripped
+# environment: they may manage Node with nvm/volta/fnm, whose shims only exist
+# once their profile has been sourced. Falling back to npx covers the case
+# where the root-level global install above could not run at all.
+enable_as_user() {
+  sudo -u "$TARGET_USER" HOME="$TARGET_HOME" bash -lc \
+    'command -v adb-bridge >/dev/null 2>&1 \
+       && exec adb-bridge games add thetower \
+       || exec npx -y adb-bridge@latest games add thetower' >/dev/null 2>&1
+}
 
-if sudo -u "$TARGET_USER" HOME="$TARGET_HOME" "$BRIDGE" games add thetower >/dev/null 2>&1; then
+if enable_as_user; then
   log "Enabled The Tower. Add more with: adb-bridge games add cifi"
   log "See all games with: adb-bridge games list"
 else
