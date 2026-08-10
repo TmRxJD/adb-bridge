@@ -1,0 +1,119 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npm run lint:syntax
+      - run: npm test
+
+  # A clean Windows runner is the sandbox for installer testing. It matters that
+  # it is clean: local testing kept hitting a machine with Volta installed, whose
+  # shims and package layout masked what a normal user would actually see.
+  installer-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Build installer
+        run: node installer/windows/build.mjs
+
+      - name: Install silently, with both games and autostart
+        shell: pwsh
+        run: |
+          $log = Join-Path $env:TEMP 'setup.log'
+          $sw = [Diagnostics.Stopwatch]::StartNew()
+          $p = Start-Process dist\AdbBridgeSetup.exe -PassThru -ArgumentList `
+            '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART', `
+            '/TASKS=game_thetower,game_cifi,startup', "/LOG=$log"
+          # A silent install that needs a click is a bug, not a slow install:
+          # a MsgBox from [Code] is not covered by /SUPPRESSMSGBOXES and will
+          # sit here forever. Fail rather than hang the job.
+          if (-not $p.WaitForExit(300000)) {
+            $p.Kill()
+            Get-Content $log -Tail 40
+            throw 'Installer did not finish in 5 minutes - it is probably waiting on a dialog.'
+          }
+          Write-Host "exit=$($p.ExitCode) in $([int]$sw.Elapsed.TotalSeconds)s"
+          if ($p.ExitCode -ne 0) { Get-Content $log -Tail 40; throw "Installer exited $($p.ExitCode)" }
+          Get-Content $log | Select-String 'Process exit code'
+
+      - name: Check what the install actually did
+        shell: pwsh
+        run: |
+          $fail = @()
+
+          $cfg = "$env:USERPROFILE\.adb-bridge\bridge.json"
+          if (Test-Path $cfg) {
+            $games = (Get-Content $cfg -Raw | ConvertFrom-Json).games
+            Write-Host "enabled games: $($games -join ', ')"
+            if ($games -notcontains 'thetower') { $fail += 'thetower was not enabled' }
+            if ($games -notcontains 'cifi')     { $fail += 'cifi was not enabled' }
+          } else {
+            $fail += 'bridge.json was never written - no games were enabled'
+          }
+
+          $startup = Join-Path ([Environment]::GetFolderPath('Startup')) 'ADB Bridge.cmd'
+          $task = schtasks /Query /TN AdbBridge 2>$null
+          if (-not (Test-Path $startup) -and -not $task) {
+            $fail += 'no autostart entry was created'
+          }
+
+          # The behaviour that got the per-game bridge flagged as
+          # Trojan:Script/Wacatac.C!ml. It must never come back.
+          $run = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -ErrorAction SilentlyContinue
+          if (@($run.PSObject.Properties.Name) -match 'Adb|Bridge') { $fail += 'a Run-key was written' }
+
+          if ($fail) { $fail | ForEach-Object { Write-Error $_ }; exit 1 }
+          Write-Host 'install verified'
+
+      - name: Serve, and check the ports answer
+        shell: pwsh
+        run: |
+          $p = Start-Process node -PassThru -NoNewWindow -ArgumentList `
+            'bin/adb-bridge.js','--no-boot','--daemon' -RedirectStandardOutput serve.log
+          Start-Sleep 8
+          Get-Content serve.log -ErrorAction SilentlyContinue
+          $bad = @()
+          foreach ($port in 43781, 43791) {
+            $ok = (Test-NetConnection 127.0.0.1 -Port $port -WarningAction SilentlyContinue).TcpTestSucceeded
+            Write-Host "port ${port}: $(if ($ok) {'listening'} else {'CLOSED'})"
+            if (-not $ok) { $bad += $port }
+          }
+          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          if ($bad) { throw "ports not served: $($bad -join ', ')" }
+
+      - name: Uninstall cleanly
+        shell: pwsh
+        run: |
+          $u = "$env:LOCALAPPDATA\AdbBridge\unins000.exe"
+          $p = Start-Process $u -PassThru -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART'
+          if (-not $p.WaitForExit(180000)) { $p.Kill(); throw 'Uninstaller hung' }
+          Start-Sleep 3
+          $startup = Join-Path ([Environment]::GetFolderPath('Startup')) 'ADB Bridge.cmd'
+          if (Test-Path $startup) { throw 'autostart entry survived uninstall' }
+          if (schtasks /Query /TN AdbBridge 2>$null) { throw 'scheduled task survived uninstall' }
+          Write-Host 'uninstall verified'
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-installer
+          path: dist/AdbBridgeSetup.exe
