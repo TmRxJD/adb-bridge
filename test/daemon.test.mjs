@@ -98,6 +98,27 @@ test('a client sending no Origin still works (native clients, curl)', async () =
   conn.ws.close()
 })
 
+test('one game on a busy port does not take the others down', async () => {
+  // ws re-emits the http server's error on the WebSocketServer, and an 'error'
+  // event with no listener is fatal -- a single busy port used to kill the
+  // whole process, and with it every other game's bridge.
+  const blocker = start(testProfile({ id: 'blocker', port: 45993 }))
+  const blockedPort = await listeningPort(blocker)
+
+  const contender = startGameBridge(testProfile({ id: 'contender', port: 45993 }), {
+    port: blockedPort,
+    watchSave: false,
+  })
+  started.push(contender)
+
+  assert.equal(await contender.ready, false, 'the second bind should report failure')
+
+  // The survivor must still be serving.
+  const conn = await connect(blockedPort, 'https://allowed.example')
+  assert.ok(conn.ok, 'the game that bound first must keep working')
+  conn.ws.close()
+})
+
 test('the daemon starts only the games that are enabled', async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'adb-bridge-daemon-'))
   const previous = process.env.ADB_BRIDGE_HOME

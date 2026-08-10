@@ -53,9 +53,23 @@ export async function startBridge(options = {}) {
     bridges.push(startGameBridge(profile, { ...options, uploader }))
   }
 
-  log(
-    `adb-bridge serving ${bridges.length} game(s): `
-    + bridges.map(b => `${b.profile.name} (${b.port})`).join(', '),
-  )
-  return { bridges, profiles: enabled }
+  // Wait for each to bind (or fail) before reporting, so the summary reflects
+  // what is actually serving rather than what was attempted.
+  const results = await Promise.all(bridges.map(bridge => bridge.ready))
+  const serving = bridges.filter((_, index) => results[index])
+  const failed = bridges.filter((_, index) => !results[index])
+
+  if (serving.length > 0) {
+    log(
+      `adb-bridge serving ${serving.length} game(s): `
+      + serving.map(b => `${b.profile.name} (${b.port})`).join(', '),
+    )
+  }
+  if (failed.length > 0) {
+    log(`Could not start: ${failed.map(b => b.profile.name).join(', ')}.`)
+    // Something the user enabled is not working; say so in the exit code.
+    process.exitCode = 1
+  }
+
+  return { bridges, serving, failed, profiles: enabled }
 }

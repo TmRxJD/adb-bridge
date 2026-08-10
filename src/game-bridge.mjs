@@ -354,25 +354,51 @@ export function startGameBridge(profile, options = {}) {
   })
   attachWebSocketHandlers(wss, ctx)
 
-  server.listen(port, host, () => {
-    // Report the bound port, not the requested one: port 0 means "any free
-    // port", so the requested value is not what a client should connect to.
-    const bound = server.address()?.port ?? port
-    console.log(`[${profile.id}] ${profile.name} listening on http://${host}:${bound}`)
-  })
+  /**
+   * Resolves true once this game is serving, false if it could not start.
+   *
+   * One game failing must not take the others down with it -- the whole point
+   * of a single process is that enabling a second game is cheap and safe.
+   */
+  const ready = new Promise(resolve => {
+    server.listen(port, host, () => {
+      // Report the bound port, not the requested one: port 0 means "any free
+      // port", so the requested value is not what a client should connect to.
+      const bound = server.address()?.port ?? port
+      console.log(`[${profile.id}] ${profile.name} listening on http://${host}:${bound}`)
+      resolve(true)
+    })
 
-  server.on('error', error => {
-    if (error?.code === 'EADDRINUSE') {
-      console.error(
-        `[${profile.id}] Port ${port} is already in use. `
-        + 'Another bridge is probably already running -- close it, or run '
-        + '`adb-bridge games list` to see what is enabled.',
-      )
-    } else {
-      console.error(`[${profile.id}] server error:`, error)
+    // ws re-emits the http server's error, so the same failure arrives twice.
+    let reported = false
+    const onError = error => {
+      if (reported) return
+      reported = true
+      if (error?.code === 'EADDRINUSE') {
+        console.error(
+          `[${profile.id}] Port ${port} is already in use, so ${profile.name} was not started. `
+          + 'An older per-game bridge is probably still running -- close it, or uninstall it '
+          + 'now that adb-bridge serves this game.',
+        )
+      } else {
+        console.error(`[${profile.id}] server error:`, error?.message || error)
+      }
+      resolve(false)
     }
-    process.exitCode = 1
+
+    // Both need a handler. ws re-emits the server's error on the
+    // WebSocketServer, and an 'error' event with no listener is fatal -- one
+    // busy port used to kill every other game's bridge with it.
+    server.on('error', onError)
+    wss.on('error', onError)
   })
 
-  return { profile, server, wss, port, close: () => new Promise(r => server.close(r)) }
+  return {
+    profile,
+    server,
+    wss,
+    port,
+    ready,
+    close: () => new Promise(resolve => server.close(() => resolve())),
+  }
 }
