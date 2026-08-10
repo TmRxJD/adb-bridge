@@ -35,9 +35,24 @@ jobs:
             echo "Tag $tag does not match package.json $pkg" >&2
             exit 1
           fi
-      - run: npm publish --access public
+      # Skipped when NPM_TOKEN is not configured, and tolerant of a version
+      # that is already on the registry -- publishing by hand and then tagging
+      # is a normal order of operations, and it should not fail the release
+      # that carries the installers.
+      - name: Publish to npm
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "::warning::NPM_TOKEN is not set; skipping the npm publish."
+            exit 0
+          fi
+          version=$(node -p "require('./package.json').version")
+          if npm view "adb-bridge@$version" version >/dev/null 2>&1; then
+            echo "adb-bridge@$version is already published; nothing to do."
+            exit 0
+          fi
+          npm publish --access public
 
   windows:
     runs-on: windows-latest
