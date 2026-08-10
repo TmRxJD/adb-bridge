@@ -25,6 +25,17 @@
  *   upload(bytes, { log, reason }): Promise<{ messages?: string[] }>
  *     Do the upload. Return human-readable lines to log, if any.
  *     Must not throw for ordinary failures -- report them in messages.
+ *
+ * And, if it supports linking an account:
+ *
+ *   describeLink(): object            Safe-to-send link state (never secrets).
+ *   link(payload): Promise<object>    Store a link; returns describeLink().
+ *   unlink(): Promise<void>
+ *   setAutoUpload(enabled): Promise<void>
+ *
+ * The LINK_ACCOUNT / UNLINK_ACCOUNT / SET_AUTO_UPLOAD / UPLOAD_NOW protocol
+ * messages are answered from these. A plugin without them makes the bridge
+ * report the feature as unsupported rather than failing the connection.
  */
 
 /** A plugin that does nothing, used whenever a game has no uploader. */
@@ -33,7 +44,18 @@ export const NO_UPLOADER = Object.freeze({
   isAutoUploadEnabled: () => false,
   acquireSaveBytes: async () => null,
   upload: async () => ({ messages: [] }),
+  supportsLinking: false,
 })
+
+/** True when this plugin can link an account, not merely upload. */
+export function supportsLinking(uploader) {
+  return Boolean(
+    uploader &&
+    typeof uploader.link === 'function' &&
+    typeof uploader.unlink === 'function' &&
+    typeof uploader.describeLink === 'function',
+  )
+}
 
 function isUsable(candidate) {
   return Boolean(
