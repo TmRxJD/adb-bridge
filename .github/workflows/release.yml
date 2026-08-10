@@ -138,8 +138,26 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
+
+      # Websites link to /releases/latest/download/<name>, which only resolves
+      # if the asset has that exact name. Versioned filenames would mean every
+      # release silently broke the download buttons until someone edited the
+      # site, so publish stable names alongside the versioned ones.
+      - name: Give the installers stable names
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          cp artifacts/release-windows/AdbBridgeSetup.exe release/AdbBridgeSetup.exe
+          cp artifacts/release-macos/*.pkg              release/AdbBridge.pkg
+          cp artifacts/release-linux/*.deb              release/adb-bridge.deb
+          # The .rpm only exists when rpmbuild was available on the runner.
+          if compgen -G 'artifacts/release-linux/*.rpm' > /dev/null; then
+            cp artifacts/release-linux/*.rpm release/adb-bridge.rpm
+          fi
+          ls -la release
+
       - name: Attach the installers to the release
         uses: softprops/action-gh-release@v2
         with:
-          files: artifacts/**/*
+          files: release/*
           generate_release_notes: true
