@@ -213,8 +213,11 @@ jobs:
       - name: Serve, and check the port answers
         run: |
           set -euo pipefail
-          adb-bridge --no-boot --daemon > serve.log 2>&1 &
-          sleep 10
+          # Use the launcher the package installs to /usr/bin, not a global
+          # shim: the npm install ran as root, so its bin directory is not on
+          # this user's PATH -- and the launcher is the artifact under test.
+          adb-bridge-launch --no-boot --daemon > serve.log 2>&1 &
+          sleep 12
           cat serve.log || true
           nc -z 127.0.0.1 43781 || { echo "port 43781 not served" >&2; exit 1; }
           echo "port 43781 listening"
