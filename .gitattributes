@@ -1,0 +1,17 @@
+# Shell scripts and macOS pkg scripts must be LF. A CRLF shebang line fails
+# with "bad interpreter: /bin/bash^M", which is an obscure way to discover that
+# a repo was checked out on Windows.
+*.sh            text eol=lf
+*.command       text eol=lf
+installer/macos/scripts/** text eol=lf
+
+# Batch files are the opposite: cmd.exe parses LF-only .cmd files unreliably.
+*.cmd           text eol=crlf
+*.bat           text eol=crlf
+
+*.mjs           text eol=lf
+*.js            text eol=lf
+*.json          text eol=lf
+*.yml           text eol=lf
+*.md            text eol=lf
+*.iss           text eol=crlf
