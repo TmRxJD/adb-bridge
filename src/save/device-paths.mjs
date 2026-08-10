@@ -88,6 +88,12 @@ function downloadPaths(profile) {
  * Android 11+, so for most USB users the only file that can be pulled is one
  * they exported themselves. Probing the unreadable path first made every pull
  * wait on a guaranteed failure.
+ *
+ * NOT used by the physical-device pull, which reaches the save a different way
+ * (run-as, then the app's own directories, then an on-device `find`) and only
+ * accepts an app-storage path. This is exported for callers that want the
+ * ordering itself; do not "fix" the physical path to use it, because falling
+ * back to a Download-folder export is exactly what that path refuses to do.
  */
 export function buildUsbPullPaths(profile) {
   return dedupe([

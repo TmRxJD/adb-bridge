@@ -1,4 +1,5 @@
 import http from 'node:http'
+import { createRequire } from 'node:module'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { WebSocketServer } from 'ws'
@@ -9,6 +10,7 @@ import {
   requireAdbExecutable,
 } from './adb/adb-resolve.mjs'
 import { handlePrivateNetworkHttp } from './http-handlers.mjs'
+import { effectiveOrigins } from './origins.mjs'
 import { NO_UPLOADER, supportsLinking } from './upload/uploader-plugin.mjs'
 import {
   getLastDevice,
@@ -39,10 +41,18 @@ export const DEFAULT_HOST = '127.0.0.1'
  */
 function isOriginAllowed(profile, origin) {
   if (!origin) return true
-  return profile.allowedOrigins.includes(origin)
+  // The profile's own sites, plus anything the user added with
+  // `adb-bridge origins add`. Read per request so adding one takes effect
+  // without restarting the bridge -- a user fixing a rejected connection
+  // should not have to guess that a restart is also required.
+  return effectiveOrigins(profile).includes(origin)
 }
 
-export const BRIDGE_VERSION = '0.1.0'
+// Read from package.json rather than restated: a hardcoded copy had already
+// drifted to 0.1.0 while the package was 0.1.3, and the website may use this
+// for compatibility checks.
+const require_ = createRequire(import.meta.url)
+export const BRIDGE_VERSION = require_('../package.json').version
 
 async function runAdb(args, timeoutMs = 120_000) {
   const adb = await requireAdbExecutable()
@@ -335,9 +345,18 @@ export function startGameBridge(profile, options = {}) {
   }
 
   const server = http.createServer((req, res) => {
-    if (!isOriginAllowed(profile, req.headers?.origin)) {
-      res.writeHead(403)
-      res.end()
+    const origin = req.headers?.origin
+    if (!isOriginAllowed(profile, origin)) {
+      // Say why, and how to fix it. A bare 403 looks like the bridge is broken,
+      // which is the wrong thing to conclude when a site simply moved domain.
+      console.log(
+        `[${profile.id}] Refused a connection from ${origin}. `
+        + `If that is really ${profile.name}'s site, allow it with: `
+        + `adb-bridge origins add ${profile.id} ${origin}`,
+      )
+      res.writeHead(403, { 'Content-Type': 'text/plain' })
+      res.end(`Origin ${origin} is not allowed to reach ${profile.name}.
+`)
       return
     }
     if (handlePrivateNetworkHttp(req, res, { version, game: profile.id })) return

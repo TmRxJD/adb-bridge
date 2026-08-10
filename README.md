@@ -68,6 +68,21 @@ Drop a JSON file in `~/.adb-bridge/games/`. Nothing to publish, no code:
 `adb-bridge games list` will pick it up. See
 [`docs/game-profiles.md`](docs/game-profiles.md) for every field.
 
+## Which sites may connect
+
+The bridge serves save-file bytes off your device, so it only accepts
+connections from the sites a game declares. Anything else is refused.
+
+```bash
+adb-bridge origins list
+adb-bridge origins add thetower https://my-mirror.example
+adb-bridge origins remove thetower https://my-mirror.example
+```
+
+Changes apply immediately — no restart. A game's own sites are built in and
+cannot be removed here; to change those, put your own profile in
+`~/.adb-bridge/games/`.
+
 ## Autostart
 
 ```bash

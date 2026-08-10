@@ -1,5 +1,6 @@
 import { createRequire } from 'node:module'
 import { runGamesCommand } from './games/commands.mjs'
+import { runOriginsCommand } from './origins-commands.mjs'
 import { loadAllGameProfiles } from './games/registry.mjs'
 import { bridgeIsConfigured, enableGame, readEnabledGameIds } from './bridge-state.mjs'
 import {
@@ -22,6 +23,11 @@ Usage
   adb-bridge games list             Show available and enabled games
   adb-bridge games add <id>         Enable a game (joins an existing bridge)
   adb-bridge games remove <id>      Disable a game
+
+Which sites may connect
+  adb-bridge origins list [id]      Show the sites allowed to reach a game
+  adb-bridge origins add <id> <origin>     Allow another site
+  adb-bridge origins remove <id> <origin>  Withdraw one you added
 
 Startup
   --boot                            Register autostart, then serve
@@ -82,6 +88,10 @@ export async function runCliMain(argv = process.argv.slice(2), log = console.log
 
   if (options.positional[0] === 'games') {
     return runGamesCommand(options.positional.slice(1), log)
+  }
+
+  if (options.positional[0] === 'origins') {
+    return runOriginsCommand(options.positional.slice(1), log)
   }
 
   if (options.removeBoot) {

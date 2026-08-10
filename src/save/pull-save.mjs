@@ -6,10 +6,9 @@ import { promisify } from 'node:util'
 import { normalizeAdbExecError, requireAdbExecutable } from '../adb/adb-resolve.mjs'
 import {
   buildEmulatorPullPaths,
-  buildUsbPullPaths,
   KNOWN_EMULATOR_ADB_HOSTS,
 } from './device-paths.mjs'
-import { bytesLookLikeSaveFile, bytesLookLikeShellFailure } from './save-bytes.mjs'
+import { bytesLookLikeSaveFile } from './save-bytes.mjs'
 import { resolveDeviceDisplayName } from '../adb/device-label.mjs'
 import {
   discoverNativeHostSave,
@@ -617,7 +616,7 @@ async function tryPullOnSerial(serial, profile, options = {}) {
   }
 }
 
-async function tryPullOnSerialWithRetries(serial, options = {}) {
+async function tryPullOnSerialWithRetries(serial, profile, options = {}) {
   const preferPhysical = Boolean(options.preferPhysicalDevice)
   const maxAttempts = preferPhysical ? resolveUsbPullRetries() : 1
   const consoleUi = options.console
@@ -705,7 +704,7 @@ export async function pullSave(profile, options = {}) {
 
   for (const serial of candidates) {
     lastTried = serial
-    const result = await tryPullOnSerialWithRetries(serial, options)
+    const result = await tryPullOnSerialWithRetries(serial, profile, options)
     if (result) {
       const deviceLabel = await resolveDeviceDisplayName(result.deviceSerial)
       if (preferPhysical) {
