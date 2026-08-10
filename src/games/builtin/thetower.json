@@ -1,0 +1,19 @@
+{
+  "id": "thetower",
+  "name": "The Tower",
+  "port": 43781,
+  "androidPackages": [
+    "com.TechTreeGames.TheTower",
+    "com.thetowergame"
+  ],
+  "saveFilename": "playerInfo.dat",
+  "alternateSaveFilenames": ["PlayerInfo.dat"],
+  "allowedOrigins": [
+    "https://the-tower-run-tracker.com",
+    "https://www.the-tower-run-tracker.com",
+    "https://dev.the-tower-run-tracker.com",
+    "http://localhost:5174",
+    "http://127.0.0.1:5174"
+  ],
+  "uploader": "adb-bridge-uploader-thetower"
+}

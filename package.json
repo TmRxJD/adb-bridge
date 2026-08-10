@@ -1,0 +1,50 @@
+{
+  "name": "adb-bridge",
+  "version": "0.1.0",
+  "description": "Game-agnostic local ADB bridge: pulls save files from an Android device or emulator and serves them to a local website. One bridge, many games.",
+  "license": "GPL-3.0-or-later",
+  "type": "module",
+  "bin": {
+    "adb-bridge": "bin/adb-bridge.js"
+  },
+  "main": "src/index.mjs",
+  "exports": {
+    ".": "./src/index.mjs",
+    "./games": "./src/games/registry.mjs"
+  },
+  "files": [
+    "bin",
+    "src",
+    "LICENSE",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node --test \"test/*.test.mjs\"",
+    "lint:syntax": "node scripts/check-syntax.mjs",
+    "prepublishOnly": "npm run lint:syntax && npm test"
+  },
+  "keywords": [
+    "adb",
+    "android",
+    "emulator",
+    "save-file",
+    "bridge",
+    "the-tower",
+    "cifi"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TmRxJD/adb-bridge.git"
+  },
+  "bugs": {
+    "url": "https://github.com/TmRxJD/adb-bridge/issues"
+  },
+  "homepage": "https://github.com/TmRxJD/adb-bridge#readme",
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

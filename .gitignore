@@ -1,0 +1,10 @@
+node_modules/
+dist/
+*.tgz
+*.log
+.DS_Store
+Thumbs.db
+
+# Installer build output (produced by installer/*/build.mjs)
+installer/**/out/
+installer/windows/*.exe
