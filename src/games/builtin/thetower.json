@@ -15,5 +15,14 @@
     "http://localhost:5174",
     "http://127.0.0.1:5174"
   ],
+  "nativeHost": {
+    "macBundleId": "com.TechTreeGames.TheTower",
+    "label": "macOS (The Tower app)",
+    "appSupportSubdirs": [
+      ["com.TechTreeGames.TheTower"],
+      ["TechTreeGames", "The Tower"]
+    ],
+    "appSupportNameHints": ["tower", "techtree"]
+  },
   "uploader": "adb-bridge-uploader-thetower"
 }

@@ -131,6 +131,40 @@ export function normalizeGameProfile(input, options = {}) {
    * game's dependencies into everyone else's install. The module is imported
    * only when the game is enabled and the package is actually present.
    */
+  /**
+   * Optional: where this game's *desktop* install keeps its save, for when no
+   * Android device is attached. Android-only games omit it entirely.
+   */
+  let nativeHost = null
+  if (input.nativeHost !== undefined && input.nativeHost !== null) {
+    const raw = input.nativeHost
+    if (typeof raw !== 'object' || Array.isArray(raw)) {
+      fail('"nativeHost" must be an object', source)
+    }
+    if (typeof raw.macBundleId !== 'string' || !PACKAGE_RE.test(raw.macBundleId)) {
+      fail('"nativeHost.macBundleId" must be a bundle id, e.g. "com.example.MyGame"', source)
+    }
+    // Each entry is a path split into segments, so "TechTreeGames/The Tower"
+    // is written ["TechTreeGames", "The Tower"] and needs no path parsing.
+    let appSupportSubdirs = []
+    if (raw.appSupportSubdirs !== undefined) {
+      if (!Array.isArray(raw.appSupportSubdirs)) {
+        fail('"nativeHost.appSupportSubdirs" must be an array of path-segment arrays', source)
+      }
+      appSupportSubdirs = raw.appSupportSubdirs.map(entry =>
+        asStringArray(entry, 'nativeHost.appSupportSubdirs', source),
+      )
+    }
+    nativeHost = Object.freeze({
+      macBundleId: raw.macBundleId,
+      label: typeof raw.label === 'string' ? raw.label : null,
+      appSupportSubdirs: Object.freeze(appSupportSubdirs),
+      appSupportNameHints: Object.freeze(
+        asStringArray(raw.appSupportNameHints, 'nativeHost.appSupportNameHints', source),
+      ),
+    })
+  }
+
   let uploader = null
   if (input.uploader !== undefined && input.uploader !== null) {
     if (typeof input.uploader !== 'string' || !input.uploader.trim()) {
@@ -148,6 +182,7 @@ export function normalizeGameProfile(input, options = {}) {
     alternateSaveFilenames: Object.freeze(alternateSaveFilenames),
     extraDevicePaths: Object.freeze(extraDevicePaths),
     allowedOrigins: Object.freeze(allowedOrigins),
+    nativeHost,
     uploader,
     builtin: options.builtin === true,
     source: source ?? null,
