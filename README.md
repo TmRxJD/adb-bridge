@@ -38,6 +38,22 @@ npx adb-bridge
 Or download an installer from
 [Releases](https://github.com/TmRxJD/adb-bridge/releases).
 
+### Code signing
+
+The Windows installer and executables are code signed. The free code signing
+service is provided by [SignPath.io](https://signpath.io/), and the certificate
+by the [SignPath Foundation](https://signpath.io/code-signing-for-open-source).
+
+Signing happens in the release workflow, from a build produced by that workflow
+out of this repository. Nothing is signed from a local machine.
+
+### Privacy
+
+adb-bridge reads save files from your device and computer, so it is worth being
+precise about where they go: see [PRIVACY.md](PRIVACY.md). In short, there is no
+server, no telemetry, and save data leaves your computer only if you explicitly
+link an account for a game that supports upload.
+
 ## Games
 
 ```bash

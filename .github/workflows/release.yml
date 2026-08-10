@@ -176,3 +176,30 @@ jobs:
         with:
           files: release/*
           generate_release_notes: true
+          # The SignPath Foundation requires the page users download from to
+          # state that the project uses it for code signing. Appended here so
+          # every release carries it, rather than depending on whoever writes
+          # the notes remembering to.
+          append_body: true
+          body: |
+            ## Downloads
+
+            Windows, macOS and Linux installers are attached below. Or install
+            from npm with `npx adb-bridge`.
+
+            ### Code signing
+
+            The Windows installer and executables are code signed. Free code
+            signing is provided by [SignPath.io](https://signpath.io/), with a
+            certificate from the
+            [SignPath Foundation](https://signpath.io/code-signing-for-open-source).
+
+            Artifacts are built and signed by this repository's release
+            workflow. Nothing is signed from a local machine.
+
+            ### Privacy
+
+            adb-bridge reads save files from your device and computer. What it
+            reads, stores and sends is documented in
+            [PRIVACY.md](https://github.com/TmRxJD/adb-bridge/blob/main/PRIVACY.md).
+            There is no server and no telemetry.
