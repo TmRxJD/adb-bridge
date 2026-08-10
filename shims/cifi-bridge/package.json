@@ -1,0 +1,13 @@
+{
+  "name": "cifi-bridge",
+  "version": "1.1.0",
+  "description": "Compatibility wrapper: CIFI support moved to adb-bridge, which serves many games from one install.",
+  "license": "GPL-3.0-or-later",
+  "type": "module",
+  "bin": { "cifi-bridge": "bin/cifi-bridge.js" },
+  "files": ["bin", "shim.mjs", "README.md"],
+  "engines": { "node": ">=18" },
+  "dependencies": { "adb-bridge": "^0.1.1" },
+  "repository": { "type": "git", "url": "git+https://github.com/TmRxJD/adb-bridge.git", "directory": "shims/cifi-bridge" },
+  "homepage": "https://github.com/TmRxJD/adb-bridge#readme"
+}

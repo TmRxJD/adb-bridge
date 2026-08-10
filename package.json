@@ -1,6 +1,6 @@
 {
   "name": "adb-bridge",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Game-agnostic local ADB bridge: pulls save files from an Android device or emulator and serves them to a local website. One bridge, many games.",
   "license": "GPL-3.0-or-later",
   "type": "module",
@@ -10,7 +10,9 @@
   "main": "src/index.mjs",
   "exports": {
     ".": "./src/index.mjs",
-    "./games": "./src/games/registry.mjs"
+    "./games": "./src/games/registry.mjs",
+    "./package.json": "./package.json",
+    "./bin/adb-bridge.js": "./bin/adb-bridge.js"
   },
   "files": [
     "bin",
