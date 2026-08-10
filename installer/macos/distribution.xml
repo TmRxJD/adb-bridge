@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Game selection on macOS.
+
+  A .pkg has no way to hand a checkbox state to a single postinstall script, so
+  each game is its own component package whose postinstall enables just that
+  game. The user ticks games in the installer's Customise pane and gets one
+  bridge that serves whichever they chose.
+-->
+<installer-gui-script minSpecVersion="2">
+  <title>ADB Bridge</title>
+  <organization>io.github.tmrxjd</organization>
+  <options customize="always" require-scripts="false" hostArchitectures="arm64,x86_64"/>
+  <license file="LICENSE"/>
+
+  <choices-outline>
+    <line choice="core"/>
+    <line choice="game_thetower"/>
+    <line choice="game_cifi"/>
+  </choices-outline>
+
+  <!-- Not optional: without it there is no bridge to enable games on. -->
+  <choice id="core" title="ADB Bridge" enabled="false" selected="true"
+          description="The bridge itself, plus Node.js if this Mac does not have it.">
+    <pkg-ref id="io.github.tmrxjd.adb-bridge.core"/>
+  </choice>
+
+  <choice id="game_thetower" title="The Tower" selected="true"
+          description="Serve The Tower on port 43781.">
+    <pkg-ref id="io.github.tmrxjd.adb-bridge.thetower"/>
+  </choice>
+
+  <choice id="game_cifi" title="CIFI" selected="false"
+          description="Serve CIFI on port 43791.">
+    <pkg-ref id="io.github.tmrxjd.adb-bridge.cifi"/>
+  </choice>
+
+  <pkg-ref id="io.github.tmrxjd.adb-bridge.core" version="0">core.pkg</pkg-ref>
+  <pkg-ref id="io.github.tmrxjd.adb-bridge.thetower" version="0">thetower.pkg</pkg-ref>
+  <pkg-ref id="io.github.tmrxjd.adb-bridge.cifi" version="0">cifi.pkg</pkg-ref>
+</installer-gui-script>

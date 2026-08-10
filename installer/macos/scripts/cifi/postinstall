@@ -1,0 +1,5 @@
+#!/bin/bash
+# Component package for the cifi game: enables it on the bridge.
+set -u
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec "$here/enable-game.sh" cifi

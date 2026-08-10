@@ -87,9 +87,14 @@ jobs:
       - name: Serve, and check the ports answer
         shell: pwsh
         run: |
-          $p = Start-Process node -PassThru -NoNewWindow -ArgumentList `
-            'bin/adb-bridge.js','--no-boot','--daemon' -RedirectStandardOutput serve.log
-          Start-Sleep 8
+          # Run what the installer put on this machine, not the checkout: the
+          # checkout has no node_modules in this job, and the installed copy is
+          # the artifact under test.
+          $bridge = (Get-Command adb-bridge -ErrorAction SilentlyContinue).Source
+          if (-not $bridge) { throw 'adb-bridge was not installed globally by the installer' }
+          $p = Start-Process $bridge -PassThru -NoNewWindow `
+            -ArgumentList '--no-boot','--daemon' -RedirectStandardOutput serve.log
+          Start-Sleep 10
           Get-Content serve.log -ErrorAction SilentlyContinue
           $bad = @()
           foreach ($port in 43781, 43791) {
@@ -117,3 +122,98 @@ jobs:
         with:
           name: windows-installer
           path: dist/AdbBridgeSetup.exe
+
+  installer-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Build pkg
+        run: bash installer/macos/build-pkg.sh
+
+      - name: Install it
+        run: |
+          set -euo pipefail
+          pkg=$(ls dist/AdbBridge-*.pkg)
+          # -target / applies the default choices: core + The Tower, not CIFI.
+          sudo installer -pkg "$pkg" -target / -verbose
+
+      - name: Check what the install actually did
+        run: |
+          set -euo pipefail
+          cfg="$HOME/.adb-bridge/bridge.json"
+          if [ ! -f "$cfg" ]; then
+            echo "bridge.json was never written - no games were enabled" >&2
+            exit 1
+          fi
+          cat "$cfg"
+          node -e '
+            const games = require(process.env.HOME + "/.adb-bridge/bridge.json").games
+            if (!games.includes("thetower")) { console.error("thetower not enabled"); process.exit(1) }
+            // CIFI is unselected by default, so it must NOT have been enabled.
+            if (games.includes("cifi")) { console.error("cifi enabled but was not selected"); process.exit(1) }
+            console.log("install verified:", games.join(", "))
+          '
+
+      - name: Serve, and check the port answers
+        run: |
+          set -euo pipefail
+          adb-bridge --no-boot --daemon > serve.log 2>&1 &
+          sleep 10
+          cat serve.log || true
+          nc -z 127.0.0.1 43781 || { echo "port 43781 not served" >&2; exit 1; }
+          echo "port 43781 listening"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macos-installer
+          path: dist/*.pkg
+
+  installer-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install fpm
+        run: sudo gem install --no-document fpm
+
+      - name: Build packages
+        run: bash installer/linux/build-packages.sh
+
+      - name: Install the .deb
+        run: sudo apt-get install -y ./dist/adb-bridge_*_all.deb
+
+      - name: Check what the install actually did
+        run: |
+          set -euo pipefail
+          command -v adb-bridge-launch >/dev/null || { echo "launcher not on PATH" >&2; exit 1; }
+          cfg="$HOME/.adb-bridge/bridge.json"
+          [ -f "$cfg" ] || { echo "no game was enabled" >&2; exit 1; }
+          cat "$cfg"
+          grep -q thetower "$cfg" || { echo "thetower not enabled" >&2; exit 1; }
+          echo "install verified"
+
+      - name: Serve, and check the port answers
+        run: |
+          set -euo pipefail
+          adb-bridge --no-boot --daemon > serve.log 2>&1 &
+          sleep 10
+          cat serve.log || true
+          nc -z 127.0.0.1 43781 || { echo "port 43781 not served" >&2; exit 1; }
+          echo "port 43781 listening"
+
+      - name: Remove it cleanly
+        run: sudo apt-get remove -y adb-bridge
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-packages
+          path: dist/*.deb

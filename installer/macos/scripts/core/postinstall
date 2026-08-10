@@ -1,0 +1,35 @@
+#!/bin/bash
+# Runs after the ADB Bridge payload is laid down. Installs Node.js when
+# missing, then the bridge itself.
+#
+# Never exits non-zero for an install failure: the launcher falls back to npx,
+# so a failed global install is a slower first run, not a broken install, and
+# failing here would roll back a package that is otherwise fine.
+set -u
+
+log() { echo "[adb-bridge] $*"; }
+
+# Homebrew, and the common version managers, live outside the installer's
+# minimal PATH. On Windows the equivalent oversight made setup declare Node
+# missing on a machine that had it.
+for p in /opt/homebrew/bin /usr/local/bin "$HOME/.volta/bin" "$HOME/.fnm" "$HOME/.nvm/versions/node"/*/bin; do
+  [ -d "$p" ] && export PATH="$p:$PATH"
+done
+
+if ! command -v node >/dev/null 2>&1; then
+  log "Node.js not found; attempting install"
+  if command -v brew >/dev/null 2>&1; then
+    brew install node || log "Homebrew install failed"
+  else
+    log "Homebrew unavailable - the launcher will prompt for Node.js"
+  fi
+fi
+
+if command -v npm >/dev/null 2>&1; then
+  npm install -g adb-bridge@latest --no-audit --no-fund --loglevel=error \
+    || log "Global install failed; the launcher will use npx instead"
+else
+  log "npm unavailable; the launcher will use npx instead"
+fi
+
+exit 0
