@@ -8,3 +8,4 @@ Thumbs.db
 # Installer build output (produced by installer/*/build.mjs)
 installer/**/out/
 installer/windows/*.exe
+games.generated.iss

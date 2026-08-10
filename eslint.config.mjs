@@ -8,7 +8,7 @@
  */
 export default [
   {
-    files: ['src/**/*.mjs', 'bin/**/*.js', 'scripts/**/*.mjs', 'plugins/**/*.mjs', 'shims/**/*.mjs'],
+    files: ['src/**/*.mjs', 'bin/**/*.js', 'scripts/**/*.mjs', 'plugins/**/*.mjs', 'shims/**/*.mjs', 'installer/**/*.mjs'],
     languageOptions: {
       ecmaVersion: 2023,
       sourceType: 'module',

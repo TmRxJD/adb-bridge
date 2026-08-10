@@ -11,6 +11,7 @@
  * cannot drift apart.
  */
 import { existsSync, mkdirSync, copyFileSync, readFileSync } from 'node:fs'
+import { generateGamesInclude } from './generate-games.mjs'
 import { execFileSync } from 'node:child_process'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -34,6 +35,17 @@ function findIscc() {
 }
 
 const iscc = findIscc()
+
+// Regenerate before every build: the checkboxes and the download-host lookup
+// come from the game profiles, so building is the only step that keeps the
+// installer and the bridge from drifting.
+const generated = generateGamesInclude(
+  path.join(pkgRoot, 'src', 'games', 'builtin'),
+  path.join(here, 'games.generated.iss'),
+)
+console.log(`Games: ${generated.games.join(', ')}`)
+console.log(`Download hosts recognised: ${generated.hosts.join(', ')}`)
+
 console.log(`Building ADB Bridge installer ${version}`)
 execFileSync(iscc, [`/DMyAppVersion=${version}`, 'adb-bridge.iss'], {
   cwd: here,

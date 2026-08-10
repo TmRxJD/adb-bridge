@@ -62,12 +62,13 @@ LicenseFile=..\..\LICENSE
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
-[Tasks]
-; One entry per built-in game. Selecting several installs ONE bridge that
-; serves them all -- that is the point of this package.
-Name: "game_thetower"; Description: "The Tower"; GroupDescription: "Which games should this bridge handle?"
-Name: "game_cifi"; Description: "CIFI"; GroupDescription: "Which games should this bridge handle?"; Flags: unchecked
+; Game checkboxes and the download-host lookup, both generated from
+; src/games/builtin/*.json so a new game is one JSON file and nothing else.
+; Every game starts unchecked; the wizard ticks one below if it can tell which
+; site the installer came from.
+#include "games.generated.iss"
 
+[Tasks]
 Name: "desktopicon"; Description: "Create a &Desktop shortcut"; GroupDescription: "Shortcuts:"; Flags: unchecked
 ; Registers a Scheduled Task (or a Startup-folder script when that needs rights
 ; this per-user install does not have). Off by default -- starting things at
@@ -89,13 +90,6 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyLauncher}"; WorkingDir:
 ; Install Node.js if needed, then the bridge itself.
 Filename: "{cmd}"; Parameters: "/c ""{app}\bootstrap.cmd"" silent"; \
   StatusMsg: "Installing Node.js and ADB Bridge..."; WorkingDir: "{app}"; Flags: runhidden waituntilterminated
-
-; Enable the chosen games. `games add` is idempotent and joins whatever bridge
-; is already configured, so re-running setup to add a game is safe.
-Filename: "{cmd}"; Parameters: "/c ""{app}\{#MyLauncher}"" games add thetower"; \
-  StatusMsg: "Enabling The Tower..."; WorkingDir: "{app}"; Flags: runhidden waituntilterminated; Tasks: game_thetower
-Filename: "{cmd}"; Parameters: "/c ""{app}\{#MyLauncher}"" games add cifi"; \
-  StatusMsg: "Enabling CIFI..."; WorkingDir: "{app}"; Flags: runhidden waituntilterminated; Tasks: game_cifi
 
 ; Register the sign-in entry only when asked. --boot-only registers and exits;
 ; --boot would register and then serve, hanging the wizard.
@@ -132,6 +126,105 @@ end;
 function LegacyStartupEntry(const FileName: String): Boolean;
 begin
   Result := FileExists(ExpandConstant('{userstartup}\') + FileName);
+end;
+
+{ ---------------------------------------------------------------------------
+  Pre-tick the game whose website this installer came from.
+
+  Windows records where a downloaded file came from in its Mark-of-the-Web
+  stream: ReferrerUrl is the page that linked it, HostUrl is where the bytes
+  actually came from. For a GitHub release asset linked from a game's site
+  those differ -- the referrer is the site, the host is GitHub's CDN -- and the
+  referrer is the one that answers "whose installer is this?".
+
+  Downloaded straight from the repo, the referrer is github.com, which matches
+  no game, so nothing is ticked and the user picks. That is the intended
+  outcome, not a failure: this is only a hint, and every path still leaves the
+  choice visible and editable on the Tasks page.
+  --------------------------------------------------------------------------- }
+
+function ZoneIdentifierValue(const Key: String; var Value: String): Boolean;
+var
+  Lines: TArrayOfString;
+  I: Integer;
+  Line: String;
+begin
+  Result := False;
+  { The stream sits beside the file; Windows addresses it with a colon. }
+  if not LoadStringsFromFile(ExpandConstant('{srcexe}') + ':Zone.Identifier', Lines) then
+    Exit;
+  for I := 0 to GetArrayLength(Lines) - 1 do
+  begin
+    Line := Trim(Lines[I]);
+    if Pos(Uppercase(Key) + '=', Uppercase(Line)) = 1 then
+    begin
+      Value := Trim(Copy(Line, Length(Key) + 2, Length(Line)));
+      Result := Value <> '';
+      Exit;
+    end;
+  end;
+end;
+
+{ Host portion of a URL, lowercased. }
+function HostOfUrl(const Url: String): String;
+var
+  Rest: String;
+  Slash: Integer;
+begin
+  Result := '';
+  Rest := Lowercase(Trim(Url));
+  if Pos('https://', Rest) = 1 then Delete(Rest, 1, 8)
+  else if Pos('http://', Rest) = 1 then Delete(Rest, 1, 7)
+  else Exit;
+  Slash := Pos('/', Rest);
+  if Slash > 0 then Rest := Copy(Rest, 1, Slash - 1);
+  Result := Rest;
+end;
+
+function DownloadedFromTask(): String;
+var
+  Url: String;
+begin
+  Result := '';
+  { Referrer first: it names the site that offered the download. HostUrl is a
+    CDN for a GitHub asset, but is the site itself when a site self-hosts. }
+  if ZoneIdentifierValue('ReferrerUrl', Url) then
+    Result := TaskForDownloadHost(HostOfUrl(Url));
+  if Result = '' then
+    if ZoneIdentifierValue('HostUrl', Url) then
+      Result := TaskForDownloadHost(HostOfUrl(Url));
+end;
+
+function AnyGameSelected(): Boolean;
+var
+  Tasks: TArrayOfString;
+  I: Integer;
+begin
+  Result := False;
+  Tasks := StringSplit(AllGameTasks(), [','], stExcludeEmpty);
+  for I := 0 to GetArrayLength(Tasks) - 1 do
+    if WizardIsTaskSelected(Tasks[I]) then
+    begin
+      Result := True;
+      Exit;
+    end;
+end;
+
+procedure CurPageChanged(CurPageID: Integer);
+var
+  Task: String;
+begin
+  if CurPageID = wpSelectTasks then
+  begin
+    { Only ever a first suggestion: once the user has ticked something, their
+      choice stands. }
+    if not AnyGameSelected() then
+    begin
+      Task := DownloadedFromTask();
+      if Task <> '' then
+        WizardSelectTasks(Task);
+    end;
+  end;
 end;
 
 function InitializeSetup(): Boolean;
@@ -181,7 +274,7 @@ begin
   Result := True;
   if CurPageID = wpSelectTasks then
   begin
-    if not (WizardIsTaskSelected('game_thetower') or WizardIsTaskSelected('game_cifi')) then
+    if not AnyGameSelected() then
     begin
       MsgBox('Pick at least one game, otherwise the bridge has nothing to do.' + #13#10#13#10 +
              'You can always add more later with:  adb-bridge games add <name>',

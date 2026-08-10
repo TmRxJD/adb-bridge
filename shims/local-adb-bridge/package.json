@@ -1,0 +1,13 @@
+{
+  "name": "local-adb-bridge",
+  "version": "1.3.0",
+  "description": "Compatibility wrapper: this became tracker-bridge and is now adb-bridge, which serves many games from one install.",
+  "license": "GPL-3.0-or-later",
+  "type": "module",
+  "bin": { "local-adb-bridge": "bin/local-adb-bridge.js" },
+  "files": ["bin", "shim.mjs", "README.md"],
+  "engines": { "node": ">=18" },
+  "dependencies": { "adb-bridge": "^0.2.1" },
+  "repository": { "type": "git", "url": "git+https://github.com/TmRxJD/adb-bridge.git", "directory": "shims/local-adb-bridge" },
+  "homepage": "https://github.com/TmRxJD/adb-bridge#readme"
+}

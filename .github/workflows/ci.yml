@@ -36,6 +36,49 @@ jobs:
       - name: Build installer
         run: node installer/windows/build.mjs
 
+      - name: A download's referrer pre-selects that game
+        shell: pwsh
+        run: |
+          # Windows records the linking page in the Mark-of-the-Web stream.
+          # Installing with no /TASKS means whatever the wizard pre-ticked is
+          # what actually runs, so the enable steps in the log are the proof.
+          $cases = @(
+            @{ name = 'tracker'; referrer = 'https://the-tower-run-tracker.com/import';   expect = 'thetower' }
+            @{ name = 'cifi';    referrer = 'https://tmrxjd.github.io/cifi-tools/';       expect = 'cifi' }
+            @{ name = 'repo';    referrer = 'https://github.com/TmRxJD/adb-bridge/releases'; expect = '' }
+          )
+          $failed = @()
+          foreach ($case in $cases) {
+            $exe = Join-Path $env:TEMP "setup-$($case.name).exe"
+            Copy-Item dist\AdbBridgeSetup.exe $exe -Force
+            $zone = "[ZoneTransfer]`r`nZoneId=3`r`nReferrerUrl=$($case.referrer)`r`nHostUrl=https://objects.githubusercontent.com/asset`r`n"
+            Set-Content -LiteralPath $exe -Stream Zone.Identifier -Value $zone
+
+            $log = Join-Path $env:TEMP "setup-$($case.name).log"
+            $p = Start-Process $exe -PassThru -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',"/LOG=$log"
+            if (-not $p.WaitForExit(300000)) { $p.Kill(); throw "install hung for $($case.name)" }
+
+            $enabled = @()
+            if (Test-Path $log) {
+              $enabled = Select-String -Path $log -Pattern 'games add (\w+)' -AllMatches |
+                ForEach-Object { $_.Matches } | ForEach-Object { $_.Groups[1].Value }
+            }
+            $got = ($enabled | Sort-Object -Unique) -join ','
+            Write-Host "$($case.name): referrer=$($case.referrer) -> '$got'"
+            if ($got -ne $case.expect) { $failed += "$($case.name): expected '$($case.expect)', got '$got'" }
+
+            $u = Join-Path $env:LOCALAPPDATA 'AdbBridge\unins000.exe'
+            if (Test-Path $u) {
+              $q = Start-Process $u -PassThru -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES'
+              $null = $q.WaitForExit(120000)
+            }
+            $cfg = Join-Path $env:USERPROFILE '.adb-bridge'
+            if (Test-Path $cfg) { Remove-Item -LiteralPath $cfg -Recurse -Force }
+          }
+          if ($failed) { $failed | ForEach-Object { Write-Error $_ }; exit 1 }
+          Write-Host 'pre-selection verified'
+          exit 0
+
       - name: Install silently, with both games and autostart
         shell: pwsh
         run: |
