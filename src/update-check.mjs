@@ -1,10 +1,28 @@
 import { spawnSync } from 'node:child_process'
+import { createRequire } from 'node:module'
 import { isAutoUpdateEnabled } from './bridge-config.mjs'
 
-const REGISTRY_URL = 'https://registry.npmjs.org/tracker-bridge/latest'
-const PACKAGE_NAME = 'tracker-bridge'
+/**
+ * Which package to update from, taken from our own package.json.
+ *
+ * This was hardcoded to `tracker-bridge` and stayed that way through the
+ * rename, so adb-bridge 0.2.1 compared itself against tracker-bridge's 1.8.1,
+ * decided it was out of date, and "updated" to the compatibility shim -- which
+ * installs adb-bridge and hands back. It could never update itself, and said so
+ * on every start.
+ *
+ * Reading the name and version from the manifest means a rename or a release
+ * cannot desynchronise it again; there is nothing here to remember to change.
+ */
+const require_ = createRequire(import.meta.url)
+const manifest = require_('../package.json')
+const PACKAGE_NAME = manifest.name
+const DISPLAY_NAME = 'ADB Bridge'
+const REGISTRY_URL = `https://registry.npmjs.org/${PACKAGE_NAME}/latest`
 /** Env guard set on the re-spawned process so the fresh copy never re-checks and loops. */
-export const SKIP_UPDATE_ENV = 'TRACKER_BRIDGE_SKIP_UPDATE_CHECK'
+export const SKIP_UPDATE_ENV = 'ADB_BRIDGE_SKIP_UPDATE_CHECK'
+/** Honoured too: a bridge started by an older parent still sets this one. */
+const LEGACY_SKIP_UPDATE_ENV = 'TRACKER_BRIDGE_SKIP_UPDATE_CHECK'
 const DEFAULT_TIMEOUT_MS = 3500
 
 /** Parse "1.4.0" → [1, 4, 0], ignoring any pre-release / build suffix. */
@@ -54,6 +72,7 @@ export async function fetchLatestPublishedVersion(timeoutMs = DEFAULT_TIMEOUT_MS
 export function shouldSkipUpdateCheck(options = {}) {
   if (options.noUpdate) return true
   if (process.env[SKIP_UPDATE_ENV] === '1') return true
+  if (process.env[LEGACY_SKIP_UPDATE_ENV] === '1') return true
   return false
 }
 
@@ -95,18 +114,18 @@ export async function maybeUpdateBridge(params) {
 
   if (!autoUpdate) {
     log('')
-    log(`A newer Tracker Bridge is available: ${currentVersion} → ${latest}.`)
+    log(`A newer ${DISPLAY_NAME} is available: ${currentVersion} → ${latest}.`)
     // Auto-update is off, so never update silently — ask if we can, otherwise just notify.
     const accepted = ask && process.stdin.isTTY ? await ask('Update now?') : false
     if (!accepted) {
       log(`Update anytime with: npx ${PACKAGE_NAME}@latest`)
-      log('(Re-enable automatic updates with: npx tracker-bridge --auto-update)')
+      log(`(Re-enable automatic updates with: npx ${PACKAGE_NAME} --auto-update)`)
       return false
     }
   } else {
     log('')
-    log(`Updating Tracker Bridge ${currentVersion} → ${latest} (automatic updates are on)…`)
-    log('Turn this off anytime with: npx tracker-bridge --no-auto-update')
+    log(`Updating ${DISPLAY_NAME} ${currentVersion} → ${latest} (automatic updates are on)…`)
+    log(`Turn this off anytime with: npx ${PACKAGE_NAME} --no-auto-update`)
   }
 
   const handedOff = runLatestBridge(argv)

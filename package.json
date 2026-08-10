@@ -1,6 +1,6 @@
 {
   "name": "adb-bridge",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Game-agnostic local ADB bridge: pulls save files from an Android device or emulator and serves them to a local website. One bridge, many games.",
   "license": "GPL-3.0-or-later",
   "type": "module",
@@ -27,8 +27,9 @@
   "scripts": {
     "test": "node --test \"test/*.test.mjs\"",
     "lint:syntax": "node scripts/check-syntax.mjs",
-    "prepublishOnly": "npm run lint && npm run lint:syntax && npm test",
-    "lint": "eslint ."
+    "prepublishOnly": "npm run lint && npm run lint:syntax && npm run lint:version-reach && npm test",
+    "lint": "eslint .",
+    "lint:version-reach": "node scripts/check-version-reach.mjs"
   },
   "keywords": [
     "adb",

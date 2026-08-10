@@ -49,10 +49,30 @@ function isOriginAllowed(profile, origin) {
 }
 
 // Read from package.json rather than restated: a hardcoded copy had already
-// drifted to 0.1.0 while the package was 0.1.3, and the website may use this
-// for compatibility checks.
+// drifted to 0.1.0 while the package was 0.1.3.
 const require_ = createRequire(import.meta.url)
 export const BRIDGE_VERSION = require_('../package.json').version
+
+/**
+ * What the website should gate on. Not the package version.
+ *
+ * The package version cannot carry this. It reset to 0.x when tracker-bridge
+ * became adb-bridge, and the website's check was `version >= 1.4.0`, so a
+ * working 0.2.1 read as "too old" -- including through the tracker-bridge shim,
+ * which reports the version of the adb-bridge it hands over to. Users who
+ * updated broke; users who ignored the rename kept working. Any scheme that
+ * compares release numbers across a rename has that failure in it somewhere.
+ *
+ * This only moves when the wire protocol changes in a way an older website
+ * cannot handle, which is rare and deliberate -- releases never touch it, so
+ * there is nothing to remember to bump.
+ *
+ * 1: HELLO/PONG carrying version, PULL_SAVE returning base64, upload handover.
+ */
+export const BRIDGE_PROTOCOL_VERSION = 1
+
+/** Lets a client tell which bridge it is talking to, across renames. */
+export const BRIDGE_PRODUCT = 'adb-bridge'
 
 async function runAdb(args, timeoutMs = 120_000) {
   const adb = await requireAdbExecutable()
@@ -103,7 +123,13 @@ function attachWebSocketHandlers(wss, ctx) {
   })
 
   wss.on('connection', ws => {
-    sendJson(ws, { type: 'HELLO', version: BRIDGE_VERSION, port: wss.options.server?.address()?.port })
+    sendJson(ws, {
+      type: 'HELLO',
+      version: BRIDGE_VERSION,
+      protocol: BRIDGE_PROTOCOL_VERSION,
+      product: BRIDGE_PRODUCT,
+      port: wss.options.server?.address()?.port,
+    })
 
     ws.on('message', async raw => {
       let message
@@ -118,6 +144,8 @@ function attachWebSocketHandlers(wss, ctx) {
         sendJson(ws, {
           type: 'PONG',
           version: BRIDGE_VERSION,
+          protocol: BRIDGE_PROTOCOL_VERSION,
+          product: BRIDGE_PRODUCT,
           account: supportsLinking(uploader) ? uploader.describeLink() : null,
           autoUpload: uploader.isAutoUploadEnabled(),
           autoConnect: isAutoConnectEnabled(),
@@ -359,7 +387,12 @@ export function startGameBridge(profile, options = {}) {
 `)
       return
     }
-    if (handlePrivateNetworkHttp(req, res, { version, game: profile.id })) return
+    if (handlePrivateNetworkHttp(req, res, {
+      version,
+      protocol: BRIDGE_PROTOCOL_VERSION,
+      product: BRIDGE_PRODUCT,
+      game: profile.id,
+    })) return
     res.writeHead(404)
     res.end()
   })

@@ -22,7 +22,7 @@ export function privateNetworkCorsHeaders(req) {
 /**
  * @param {import('http').IncomingMessage} req
  * @param {import('http').ServerResponse} res
- * @param {{ version: string }} meta
+ * @param {{ version: string, protocol?: number, product?: string }} meta
  * @returns {boolean} true if handled
  */
 export function handlePrivateNetworkHttp(req, res, meta) {
@@ -45,6 +45,8 @@ export function handlePrivateNetworkHttp(req, res, meta) {
         ok: true,
         type: 'PRIVATE_NETWORK_PING',
         version: meta.version,
+        protocol: meta.protocol,
+        product: meta.product,
       }),
     )
     return true
