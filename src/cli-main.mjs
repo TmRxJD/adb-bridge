@@ -20,6 +20,7 @@ local website. One bridge, many games.
 
 Usage
   adb-bridge                        Serve every enabled game
+  adb-bridge <game>                 Enable that game if needed, then serve
   adb-bridge games list             Show available and enabled games
   adb-bridge games add <id>         Enable a game (joins an existing bridge)
   adb-bridge games remove <id>      Disable a game
@@ -92,6 +93,27 @@ export async function runCliMain(argv = process.argv.slice(2), log = console.log
 
   if (options.positional[0] === 'origins') {
     return runOriginsCommand(options.positional.slice(1), log)
+  }
+
+  // `adb-bridge thetower` -- enable that game if it is not already, then serve.
+  //
+  // A game's own website tells people to run one command. Without this that is
+  // two (`games add`, then the bare command), and someone who runs only the
+  // second gets "No games are enabled", which reads as the bridge being broken
+  // rather than as a missing setup step.
+  const requested = options.positional[0]
+  if (requested) {
+    const { profiles } = loadAllGameProfiles()
+    const profile = profiles.get(requested.toLowerCase())
+    if (!profile) {
+      log(`No game or command called "${requested}".`)
+      log('Run `adb-bridge games list` to see what is available, or --help for commands.')
+      return 1
+    }
+    if (!readEnabledGameIds().includes(profile.id)) {
+      enableGame(profile.id)
+      log(`Enabled ${profile.name} (port ${profile.port}).`)
+    }
   }
 
   if (options.removeBoot) {
