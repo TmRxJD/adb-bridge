@@ -47,6 +47,32 @@ by the [SignPath Foundation](https://signpath.io/code-signing-for-open-source).
 Signing happens in the release workflow, from a build produced by that workflow
 out of this repository. Nothing is signed from a local machine.
 
+### Versioning, and what each number means
+
+Three numbers, and only one of them is a compatibility contract.
+
+| | What it is | When it moves |
+|---|---|---|
+| `version` in package.json | The release number people see | Every release |
+| `BRIDGE_PROTOCOL_VERSION` | What a website checks against | Only when the wire format changes in a way an older site cannot handle |
+| shim `adb-bridge` range | Which releases reach an existing install | Only when the range would stop admitting new releases |
+
+The website gates on the **protocol**, never on the release number. That is not
+a style preference: the rename from `tracker-bridge` to `adb-bridge` reset the
+release number from 1.x to 0.x, and the site's check was `version >= 1.4.0`, so
+every working install read as too old -- including through the shim, which
+reports the version of the adb-bridge it hands over to. A protocol number
+survives renames and renumbering; a release number does not.
+
+The shims track `>=0.2.2 <1.0.0` rather than `^0.2.2`. Below 1.0.0 npm treats a
+minor bump as breaking, so `^0.2.2` would strand every shim install the moment
+0.3.0 shipped. `npm run lint:version-reach` runs in `prepublishOnly` and fails
+the publish if the version being released does not satisfy every shim's range.
+
+Bumping the protocol is a two-step release, in this order: publish the bridge
+that reports the new protocol, then raise `LOCAL_ADB_BRIDGE_MIN_PROTOCOL` on the
+site. Doing it the other way locks out everyone who has not updated yet.
+
 ### Privacy
 
 adb-bridge reads save files from your device and computer, so it is worth being

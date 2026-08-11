@@ -1,6 +1,6 @@
 {
   "name": "cifi-bridge",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "description": "Compatibility wrapper: CIFI support moved to adb-bridge, which serves many games from one install.",
   "license": "GPL-3.0-or-later",
   "type": "module",
@@ -16,7 +16,7 @@
     "node": ">=18"
   },
   "dependencies": {
-    "adb-bridge": "^0.2.1"
+    "adb-bridge": ">=0.2.2 <1.0.0"
   },
   "repository": {
     "type": "git",
