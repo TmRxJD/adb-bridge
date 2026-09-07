@@ -49,6 +49,13 @@ jobs:
           )
           $failed = @()
           foreach ($case in $cases) {
+            # Each case is only meaningful on a machine with no previous install, because Inno
+            # re-selects a prior install's tasks and that looks EXACTLY like a wrong referrer
+            # match. Fail loudly on a dirty machine rather than blaming the thing under test.
+            if (Test-Path (Join-Path $env:LOCALAPPDATA 'AdbBridge')) {
+              $failed += "$($case.name): a previous install is still present -- result would be meaningless"
+              continue
+            }
             $exe = Join-Path $env:TEMP "setup-$($case.name).exe"
             Copy-Item dist\AdbBridgeSetup.exe $exe -Force
             $zone = "[ZoneTransfer]`r`nZoneId=3`r`nReferrerUrl=$($case.referrer)`r`nHostUrl=https://objects.githubusercontent.com/asset`r`n"
@@ -81,10 +88,20 @@ jobs:
             Write-Host "$($case.name): referrer=$($case.referrer) -> '$got'"
             if ($got -ne $case.expect) { $failed += "$($case.name): expected '$($case.expect)', got '$got'" }
 
-            $u = Join-Path $env:LOCALAPPDATA 'AdbBridge\unins000.exe'
+            # WAITING ON unins000.exe IS WAITING ON THE WRONG PROCESS. An Inno uninstaller copies
+            # itself to %TEMP% and re-launches from there, so the process we started exits almost
+            # immediately while the real uninstall is still running. WaitForExit therefore returned
+            # at once and the next case installed onto a machine that still had the previous one on
+            # it -- and Inno RE-SELECTS a previous install's tasks on a silent reinstall, so the
+            # neutral 'repo' case inherited 'cifi' from the case before it and this step reported a
+            # referrer bug that does not exist. Poll for the install directory actually going away.
+            $app = Join-Path $env:LOCALAPPDATA 'AdbBridge'
+            $u = Join-Path $app 'unins000.exe'
             if (Test-Path $u) {
-              $q = Start-Process $u -PassThru -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES'
-              $null = $q.WaitForExit(120000)
+              $null = Start-Process $u -PassThru -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES'
+              $deadline = (Get-Date).AddSeconds(120)
+              while ((Test-Path $app) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 500 }
+              if (Test-Path $app) { $failed += "$($case.name): uninstall did not finish" }
             }
             $cfg = Join-Path $env:USERPROFILE '.adb-bridge'
             if (Test-Path $cfg) { Remove-Item -LiteralPath $cfg -Recurse -Force }
