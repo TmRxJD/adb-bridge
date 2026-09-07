@@ -55,7 +55,21 @@ jobs:
             Set-Content -LiteralPath $exe -Stream Zone.Identifier -Value $zone
 
             $log = Join-Path $env:TEMP "setup-$($case.name).log"
-            $p = Start-Process $exe -PassThru -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',"/LOG=$log"
+            # -NoNewWindow IS LOAD-BEARING, and without it this step has never once passed.
+            #
+            # Start-Process defaults to ShellExecute, and ShellExecute is what runs the SmartScreen
+            # trust check. We have just deliberately stamped ZoneId=3 on this exe -- that is the
+            # whole point of the test -- so the shell treats an unsigned installer as downloaded
+            # from the internet and refuses to launch it. With no desktop to click "Run anyway" on,
+            # the refusal surfaces as Start-Process failing with "The operation was canceled by the
+            # user", which reads like a flake and is not one.
+            #
+            # -NoNewWindow makes PowerShell use CreateProcess instead, which skips the shell trust
+            # check while LEAVING THE STREAM IN PLACE -- and the stream is what is under test, since
+            # the installer reads ReferrerUrl out of it itself. Safe here only because the installer
+            # is PrivilegesRequired=lowest: CreateProcess cannot elevate, so a manifest asking for
+            # admin would fail instead.
+            $p = Start-Process $exe -PassThru -NoNewWindow -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',"/LOG=$log"
             if (-not $p.WaitForExit(300000)) { $p.Kill(); throw "install hung for $($case.name)" }
 
             $enabled = @()
