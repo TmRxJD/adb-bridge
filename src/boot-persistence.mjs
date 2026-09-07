@@ -50,7 +50,9 @@ const LEGACY = {
 
 /** Command used for OS startup entries -- runs detached in the background. */
 export function buildBootLaunchCommand() {
-  return 'npx adb-bridge --daemon --skip-intro --no-boot'
+  // `--yes` because a boot entry has no console: without it npx can stop on "Ok to proceed?" and
+  // the bridge simply never starts, with nothing on screen to say why.
+  return 'npx --yes adb-bridge --daemon --skip-intro --no-boot'
 }
 
 function macLaunchAgentPath(label = MAC_LABEL) {
@@ -102,14 +104,41 @@ async function runSchtasks(args, timeoutMs = 15_000) {
   return await execFileAsync('schtasks', args, { timeout: timeoutMs, windowsHide: true })
 }
 
-async function resolveWindowsNpxPath() {
+async function whereWindows(command) {
   try {
-    const { stdout } = await execFileAsync('where', ['npx'], { timeout: 10_000, windowsHide: true })
+    const { stdout } = await execFileAsync('where', [command], { timeout: 10_000, windowsHide: true })
     const first = String(stdout || '').split(/\r?\n/).map(s => s.trim()).find(Boolean)
     return first || null
   } catch {
     return null
   }
+}
+
+async function resolveWindowsNpxPath() {
+  return whereWindows('npx')
+}
+
+/**
+ * What the Windows autostart entry should actually run.
+ *
+ * PREFER THE INSTALLED BINARY OVER npx, because npx on the boot path is a network dependency.
+ * Measured: with adb-bridge installed globally (Volta), `npx adb-bridge` still reported "the
+ * following package was not found and will be installed" and downloaded it from the registry --
+ * npx does not see that global install. At sign-in that means the ports do not open until a
+ * download finishes, and do not open at all if the network is down or the registry is unreachable.
+ * Observed directly: the hidden boot process sat inside npx-cli.js with nothing listening.
+ *
+ * `--yes` on the npx fallback so it can never stop on an "Ok to proceed?" prompt it has no console
+ * to answer.
+ *
+ * @returns {Promise<string>}
+ */
+async function resolveWindowsLaunchCommand() {
+  const installed = await whereWindows('adb-bridge')
+  if (installed) return `"${installed}" --daemon --skip-intro --no-boot`
+  const npxPath = await resolveWindowsNpxPath()
+  if (npxPath) return `"${npxPath}" --yes adb-bridge --daemon --skip-intro --no-boot`
+  return buildBootLaunchCommand()
 }
 
 async function readWindowsTask(name) {
@@ -211,11 +240,8 @@ export async function installBootEntry(log = console.log) {
   }
 
   if (process.platform === 'win32') {
-    const npxPath = await resolveWindowsNpxPath()
-    const resolvedCommand = npxPath
-      ? `"${npxPath}" adb-bridge --daemon --skip-intro --no-boot`
-      : launchCommand
-    // Wrapped through cmd.exe so the npx.cmd shim runs via a shell, using the
+    const resolvedCommand = await resolveWindowsLaunchCommand()
+    // Wrapped through cmd.exe so the .cmd shim runs via a shell, using the
     // absolute path when one was found so boot-time PATH is never a factor.
     const fullCommand = `cmd.exe /c "${resolvedCommand.replace(/"/g, '\\"')}"`
 

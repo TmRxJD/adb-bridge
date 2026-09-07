@@ -42,3 +42,11 @@ test('the boot command starts the bridge without re-registering autostart', () =
   // --no-boot matters: the boot entry must not rewrite itself every sign-in.
   assert.match(command, /--no-boot/)
 })
+
+// MEASURED: the hidden boot process sat inside npx-cli.js with NOTHING listening, because npx does
+// not see a globally installed adb-bridge and re-fetches it from the registry. A boot entry that
+// can block on a download -- or on an "Ok to proceed?" prompt it has no console to answer -- is a
+// bridge that silently does not start.
+test('the npx fallback can never stop on a prompt', () => {
+  assert.match(buildBootLaunchCommand(), /--yes/)
+})
