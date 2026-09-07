@@ -32,7 +32,18 @@ const WINDOWS_STARTUP_FILE = 'ADB Bridge.cmd'
  */
 const LEGACY = {
   windowsTasks: ['TrackerBridge', 'CifiBridge'],
-  windowsStartupFiles: ['Tracker Bridge.cmd', 'CIFI Bridge.cmd'],
+  // MATCHED BY PATTERN, NOT BY EXACT NAME, and that distinction is the whole point.
+  //
+  // This list held 'Tracker Bridge.cmd' and 'CIFI Bridge.cmd' and removed neither, because the
+  // per-game Inno Setup installer does not write a .cmd -- it writes a SHORTCUT,
+  // "Tracker Bridge.lnk", pointing at a hidden tracker-bridge-hidden.vbs launcher. So the cleanup
+  // silently found nothing, the old bridge kept starting at sign-in, and it held port 43781 against
+  // the game adb-bridge would otherwise have served. Measured on a real machine: adb-bridge
+  // installed and registered for boot, and "Tracker Bridge.lnk" still sitting in Startup beside it.
+  //
+  // An exact-name list cannot survive an installer changing its extension, so match the NAME and
+  // accept any launcher extension. Our own entry is 'ADB Bridge.cmd', which none of these match.
+  windowsStartupPatterns: [/^tracker[ _-]?bridge\b.*\.(lnk|cmd|vbs|bat)$/i, /^cifi[ _-]?bridge\b.*\.(lnk|cmd|vbs|bat)$/i],
   macLabels: ['com.thetowerruntracker.tracker-bridge', 'com.cifihuntersim.cifi-bridge'],
   linuxEntries: ['tracker-bridge.desktop', 'cifi-bridge.desktop'],
 }
@@ -60,6 +71,31 @@ function windowsStartupEntryPath(filename = WINDOWS_STARTUP_FILE) {
     'AppData', 'Roaming', 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup',
     filename,
   )
+}
+
+/**
+ * Is this Startup-folder entry one of the per-game bridges we replace?
+ *
+ * Exported so the rule is checkable: the previous version of this cleanup was an exact-filename
+ * list that matched nothing on a real machine, and no test could see that because the list was
+ * private and only consulted against the live filesystem.
+ *
+ * @param {string} filename
+ * @returns {boolean}
+ */
+export function isLegacyWindowsStartupEntry(filename) {
+  const name = String(filename || '')
+  if (name === WINDOWS_STARTUP_FILE) return false // never our own entry
+  return LEGACY.windowsStartupPatterns.some(re => re.test(name))
+}
+
+/** Everything currently in the per-user Startup folder; empty when it does not exist. */
+function listWindowsStartupEntries() {
+  try {
+    return fs.readdirSync(path.dirname(windowsStartupEntryPath()))
+  } catch {
+    return []
+  }
 }
 
 async function runSchtasks(args, timeoutMs = 15_000) {
@@ -118,11 +154,10 @@ export async function removeLegacyBootEntries() {
         // Present but not removable (created by another user); leave it.
       }
     }
-    for (const filename of LEGACY.windowsStartupFiles) {
-      const target = windowsStartupEntryPath(filename)
-      if (!fs.existsSync(target)) continue
+    for (const filename of listWindowsStartupEntries()) {
+      if (!isLegacyWindowsStartupEntry(filename)) continue
       try {
-        fs.rmSync(target, { force: true })
+        fs.rmSync(windowsStartupEntryPath(filename), { force: true })
         removed.push(`startup entry "${filename}"`)
       } catch {
         // Locked; not worth failing the install over.
