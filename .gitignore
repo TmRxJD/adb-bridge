@@ -9,3 +9,9 @@ Thumbs.db
 installer/**/out/
 installer/windows/*.exe
 games.generated.iss
+
+# tooling / build output
+build/
+.turbo/
+coverage/
+graphify-out/
