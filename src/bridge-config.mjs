@@ -8,12 +8,11 @@ const CONFIG_PATH = path.join(CONFIG_DIR, 'config.json')
 
 /**
  * Auto-update is ON out of the box; the bridge updates itself and says so.
- * Auto-upload is OFF until the user links an account and opts in — it sends data
- * to the cloud, so it must never turn itself on.
+ * Auto-upload is not here: each game's uploader plugin owns it, so turning it on
+ * for one game cannot turn it on for another.
  */
 export const DEFAULT_CONFIG = Object.freeze({
   autoUpdate: true,
-  autoUpload: false,
   /** Reconnect to the last device automatically when the import page opens. */
   autoConnect: true,
   /** 'emulator' | 'usb' | 'mac' — whichever connect the user last succeeded with. */
@@ -63,8 +62,6 @@ export function readBridgeConfig() {
       ...parsed,
       autoUpdate:
         typeof parsed.autoUpdate === 'boolean' ? parsed.autoUpdate : DEFAULT_CONFIG.autoUpdate,
-      autoUpload:
-        typeof parsed.autoUpload === 'boolean' ? parsed.autoUpload : DEFAULT_CONFIG.autoUpload,
       autoConnect:
         typeof parsed.autoConnect === 'boolean' ? parsed.autoConnect : DEFAULT_CONFIG.autoConnect,
       lastDevice:
@@ -172,10 +169,3 @@ export function setScanIntervalSeconds(seconds) {
   return writeBridgeConfig({ scanIntervalSeconds: resolveScanIntervalSeconds(seconds) })
 }
 
-export function isAutoUploadEnabled() {
-  return readBridgeConfig().autoUpload === true
-}
-
-export function setAutoUploadEnabled(enabled) {
-  return writeBridgeConfig({ autoUpload: Boolean(enabled) })
-}

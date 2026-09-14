@@ -253,6 +253,7 @@ function attachWebSocketHandlers(wss, ctx) {
             log: msg => console.log(msg),
             reason: 'requested',
             profile,
+            domains: getUploadDomains(),
           })
           sendJson(ws, { type: 'UPLOAD_RESULT', ...result, source: found.source })
         } catch (error) {

@@ -6,12 +6,7 @@ import {
   writeAccountLink,
 } from './account-link.mjs'
 import { exchangeLinkToken, revokeBridgeSession } from './session-exchange.mjs'
-import {
-  getUploadDomains,
-  isAutoUploadEnabled,
-  setAutoUploadEnabled,
-  setUploadDomains,
-} from './config.mjs'
+import { isAutoUploadEnabled, setAutoUploadEnabled } from './config.mjs'
 import { acquireSaveBytes, uploadRunsFromSaveBytes } from './run-upload.mjs'
 
 /**
@@ -93,7 +88,9 @@ const uploader = {
    */
   async upload(bytes, options = {}) {
     const log = options.log ?? (() => {})
-    const domainsEnabled = getUploadDomains()
+    // The bridge owns which domains may upload and passes them in. A bridge too
+    // old to send them gets runs only, which is what it always did.
+    const domainsEnabled = Array.isArray(options.domains) ? options.domains : ['runs']
 
     let runs = { uploaded: 0, skipped: 0, total: 0 }
     if (domainsEnabled.includes('runs')) {
@@ -110,7 +107,7 @@ const uploader = {
     if (domainsEnabled.some(domain => domain !== 'runs')) {
       try {
         const { uploadDomainsFromSaveBytes } = await import('./domain-upload.mjs')
-        domains = await uploadDomainsFromSaveBytes(bytes, { log })
+        domains = await uploadDomainsFromSaveBytes(bytes, { log, domains: domainsEnabled })
       } catch (error) {
         log(`Domain upload failed: ${error?.message || error}`)
       }
@@ -121,4 +118,3 @@ const uploader = {
 }
 
 export default uploader
-export { getUploadDomains, setUploadDomains }

@@ -19,11 +19,11 @@ function configPath() {
   return path.join(uploaderDir(), 'config.json')
 }
 
+// Which domains may upload is the bridge's setting, passed to upload(); it is
+// not stored here. A second copy here once meant the site's checkboxes changed
+// nothing and only runs ever uploaded.
 const DEFAULTS = Object.freeze({
   autoUpload: false,
-  // Which kinds of data may be uploaded. Runs are the point of the feature;
-  // everything else is opt-in.
-  domains: ['runs'],
 })
 
 export function readConfig() {
@@ -54,13 +54,4 @@ export function isAutoUploadEnabled() {
 
 export function setAutoUploadEnabled(enabled) {
   return writeConfig({ autoUpload: Boolean(enabled) })
-}
-
-export function getUploadDomains() {
-  const domains = readConfig().domains
-  return Array.isArray(domains) ? domains : [...DEFAULTS.domains]
-}
-
-export function setUploadDomains(domains) {
-  return writeConfig({ domains: Array.isArray(domains) ? domains : [] })
 }

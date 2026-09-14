@@ -22,8 +22,10 @@
  *   acquireSaveBytes({ log }): Promise<{ bytes: Buffer } | null>
  *     Fetch the save when the watcher has no local file to read.
  *
- *   upload(bytes, { log, reason }): Promise<{ messages?: string[] }>
- *     Do the upload. Return human-readable lines to log, if any.
+ *   upload(bytes, { log, reason, domains }): Promise<{ messages?: string[] }>
+ *     Do the upload. `domains` is the bridge's list of what the user allows
+ *     uploading; the bridge owns that setting, not the plugin.
+ *     Return human-readable lines to log, if any.
  *     Must not throw for ordinary failures -- report them in messages.
  *
  * And, if it supports linking an account:
@@ -121,5 +123,25 @@ export async function loadUploaderForProfile(profile, log = console.log, options
     return { uploader: NO_UPLOADER, error: message }
   }
 
-  return { uploader: candidate, error: null }
+  return { uploader: serializeUploads(candidate), error: null }
+}
+
+/**
+ * Run a plugin's uploads one at a time.
+ *
+ * The watcher and "Upload now" both call upload(). Two passes at once each read
+ * the account's existing runs before either wrote, so both uploaded the same
+ * new runs: measured, 30 battles became 49 documents with 19 duplicated. Queued,
+ * the second pass reads what the first wrote and skips it.
+ *
+ * Wraps rather than copies, so a plugin's other methods and `this` are untouched.
+ */
+export function serializeUploads(plugin) {
+  let tail = Promise.resolve()
+  const upload = (bytes, options) => {
+    const run = tail.then(() => plugin.upload(bytes, options))
+    tail = run.catch(() => {})
+    return run
+  }
+  return Object.assign(Object.create(plugin), { upload })
 }

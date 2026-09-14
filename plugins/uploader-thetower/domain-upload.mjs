@@ -23,7 +23,6 @@ import {
   resolvePresetSnapshot,
 } from '@tmrxjd/platform/tools'
 import { readAccountLink } from './account-link.mjs'
-import { getUploadDomains } from './config.mjs'
 
 /**
  * Pushes tracked domain data (workshop, labs, …) to the cloud while the website
@@ -255,7 +254,7 @@ export async function uploadDomainsFromSaveBytes(bytes, options = {}) {
   if (!link?.userId) throw new Error('No tracker account is linked.')
 
   const log = options.log ?? (() => {})
-  const requested = options.domains ?? getUploadDomains()
+  const requested = Array.isArray(options.domains) ? options.domains : []
   const saveRoot = decodeSaveRoot(bytes)
   if (!saveRoot) throw new Error('Could not read the save file.')
 

@@ -4,7 +4,7 @@ import fsp from 'node:fs/promises'
 import { discoverNativeHostSave } from './native-save-discovery.mjs'
 import { probeRemoteSaveStamp } from './pull-save.mjs'
 import { NO_UPLOADER } from '../upload/uploader-plugin.mjs'
-import { getScanIntervalSeconds } from '../bridge-config.mjs'
+import { getScanIntervalSeconds, getUploadDomains } from '../bridge-config.mjs'
 import { isVerboseLogging } from '../log-level.mjs'
 
 /**
@@ -97,7 +97,7 @@ export function createSaveWatcher(options = {}) {
         verbose(`Scan (${reason}): save unchanged, nothing uploaded.`)
         return
       }
-      const result = await uploader.upload(bytes, { log, reason, profile })
+      const result = await uploader.upload(bytes, { log, reason, profile, domains: getUploadDomains() })
       lastHash = hash
       for (const message of result?.messages ?? []) {
         log(`Auto-upload (${reason}): ${message}`)
