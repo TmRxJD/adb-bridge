@@ -6,6 +6,7 @@ import { probeRemoteSaveStamp } from './pull-save.mjs'
 import { NO_UPLOADER } from '../upload/uploader-plugin.mjs'
 import { getScanIntervalSeconds, getUploadDomains, getUploadFilters } from '../bridge-config.mjs'
 import { isVerboseLogging } from '../log-level.mjs'
+import { recordSaveRead, recordUpload, recordUploadError } from '../activity.mjs'
 
 /**
  * Watches the local playerInfo.dat and uploads new runs when the game writes it,
@@ -92,6 +93,7 @@ export function createSaveWatcher(options = {}) {
       }
       const bytes = await acquire()
       if (!bytes) return
+      recordSaveRead(profile?.id)
       const hash = hashBytes(bytes)
       if (!opts.force && hash === lastHash) {
         verbose(`Scan (${reason}): save unchanged, nothing uploaded.`)
@@ -105,11 +107,13 @@ export function createSaveWatcher(options = {}) {
         filters: getUploadFilters(),
       })
       lastHash = hash
+      recordUpload(profile?.id, result)
       for (const message of result?.messages ?? []) {
         log(`Auto-upload (${reason}): ${message}`)
       }
     } catch (error) {
       // Never throw out of the watcher: a transient failure must not kill the bridge.
+      recordUploadError(profile?.id, error)
       log(`Auto-upload failed: ${error?.message || error}`)
     } finally {
       running = false

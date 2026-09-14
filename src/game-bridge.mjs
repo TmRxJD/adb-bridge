@@ -26,6 +26,7 @@ import {
 } from './bridge-config.mjs'
 import { BridgePullConsole } from './bridge-console.mjs'
 import { isVerboseLogging } from './log-level.mjs'
+import { getActivity, recordSaveRead, recordUpload, recordUploadError } from './activity.mjs'
 import {
   BridgeNoDeviceError,
   BridgeSaveNotFoundError,
@@ -109,6 +110,7 @@ function settingsSnapshot(ctx) {
     uploadDomains: getUploadDomains(),
     uploadFilters: getUploadFilters(),
     scanIntervalSeconds: getScanIntervalSeconds(),
+    activity: getActivity(ctx.profile.id),
     watchedPath: ctx.saveWatcher?.watchedPath ?? null,
   }
 }
@@ -164,6 +166,7 @@ function attachWebSocketHandlers(wss, ctx) {
           uploadDomains: getUploadDomains(),
           uploadFilters: getUploadFilters(),
           scanIntervalSeconds: getScanIntervalSeconds(),
+          activity: getActivity(profile.id),
         })
         return
       }
@@ -273,6 +276,7 @@ function attachWebSocketHandlers(wss, ctx) {
               + 'save your progress, then try again.',
             )
           }
+          recordSaveRead(profile.id)
           const result = await uploader.upload(found.bytes, {
             log: msg => console.log(msg),
             reason: 'requested',
@@ -280,8 +284,10 @@ function attachWebSocketHandlers(wss, ctx) {
             domains: getUploadDomains(),
             filters: getUploadFilters(),
           })
+          recordUpload(profile.id, result)
           sendJson(ws, { type: 'UPLOAD_RESULT', ...result, source: found.source })
         } catch (error) {
+          recordUploadError(profile.id, error)
           sendJson(ws, {
             type: 'ERROR',
             code: 'upload-failed',
