@@ -38,6 +38,8 @@
  * report the feature as unsupported rather than failing the connection.
  */
 
+import { importInstalledPlugin, installPlugin } from './plugin-install.mjs'
+
 /** A plugin that does nothing, used whenever a game has no uploader. */
 export const NO_UPLOADER = Object.freeze({
   isLinked: () => false,
@@ -75,21 +77,39 @@ function isUsable(candidate) {
  * they installed it on purpose and would otherwise see uploads silently do
  * nothing.
  *
+ * Looks inside adb-bridge's own tree first, then the bridge's plugins folder and
+ * the global npm root (see plugin-install.mjs). With `install`, a plugin found
+ * nowhere is installed into the plugins folder -- the CLI passes that, so a
+ * user who enabled The Tower gets uploads without a second install step.
+ *
+ * @param {{ install?: boolean }} [options]
  * @returns {Promise<{ uploader: object, error: string|null }>}
  */
-export async function loadUploaderForProfile(profile, log = console.log) {
+export async function loadUploaderForProfile(profile, log = console.log, options = {}) {
   if (!profile?.uploader) return { uploader: NO_UPLOADER, error: null }
+
+  const failed = error => {
+    const message = `Upload support for ${profile.name} failed to load: ${error?.message || error}`
+    log(message)
+    return { uploader: NO_UPLOADER, error: message }
+  }
 
   let loaded
   try {
     loaded = await import(profile.uploader)
   } catch (error) {
-    if (error?.code === 'ERR_MODULE_NOT_FOUND') {
-      return { uploader: NO_UPLOADER, error: null }
+    if (error?.code !== 'ERR_MODULE_NOT_FOUND') return failed(error)
+    try {
+      loaded = await importInstalledPlugin(profile.uploader)
+      if (!loaded && options.install) {
+        await installPlugin(profile.uploader, log)
+        loaded = await importInstalledPlugin(profile.uploader)
+      }
+    } catch (fallbackError) {
+      return failed(fallbackError)
     }
-    const message = `Upload support for ${profile.name} failed to load: ${error?.message || error}`
-    log(message)
-    return { uploader: NO_UPLOADER, error: message }
+    // Still absent without an install request: a plain save bridge, which is normal.
+    if (!loaded) return { uploader: NO_UPLOADER, error: null }
   }
 
   const candidate = loaded?.default ?? loaded
