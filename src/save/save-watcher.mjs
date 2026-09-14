@@ -1,7 +1,11 @@
+import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import { discoverNativeHostSave } from './native-save-discovery.mjs'
+import { probeRemoteSaveStamp } from './pull-save.mjs'
 import { NO_UPLOADER } from '../upload/uploader-plugin.mjs'
+import { getScanIntervalSeconds } from '../bridge-config.mjs'
+import { isVerboseLogging } from '../log-level.mjs'
 
 /**
  * Watches the local playerInfo.dat and uploads new runs when the game writes it,
@@ -9,19 +13,27 @@ import { NO_UPLOADER } from '../upload/uploader-plugin.mjs'
  *
  * The game rewrites the save repeatedly around a round ending, so writes are
  * debounced and passes are serialised — never overlap two uploads.
+ *
+ * A pass that finds the same save as last time does nothing. Emulator saves are
+ * checked with a one-line `stat` over adb before anything is pulled, so an idle
+ * emulator costs one tiny adb call per scan rather than a full pull and upload.
  */
 const DEBOUNCE_MS = 5_000
 /** How often to look for the save when it has not been found yet. */
 const REDISCOVER_MS = 60_000
-/**
- * Emulator saves live inside the emulator, so there is no local file to watch.
- * Those are polled over adb instead — infrequently, since each poll spawns adb.
- */
-const EMULATOR_POLL_MS = 60_000
+
+function hashBytes(bytes) {
+  return createHash('sha256').update(bytes).digest('hex')
+}
 
 export function createSaveWatcher(options = {}) {
   const log = options.log ?? console.log
+  const verbose = message => {
+    if (isVerboseLogging()) log(message)
+  }
   const debounceMs = options.debounceMs ?? DEBOUNCE_MS
+  const scanIntervalMs = options.scanIntervalMs ?? getScanIntervalSeconds() * 1000
+  const probeStamp = options.probeRemoteSaveStamp ?? probeRemoteSaveStamp
   // Injected rather than imported: the core must not depend on any one game's
   // save format or backend. See upload/uploader-plugin.mjs.
   const uploader = options.uploader ?? NO_UPLOADER
@@ -36,8 +48,36 @@ export function createSaveWatcher(options = {}) {
   let stopped = false
   let lastMtimeMs = 0
   let watchedPath = null
+  /** Hash of the last save handed to the uploader. */
+  let lastHash = null
+  /** Where the last emulator save came from, and its stamp at the time. */
+  let lastRemote = null
 
-  async function runUpload(reason) {
+  /** True when the emulator save is provably the one already processed. */
+  async function remoteSaveUnchanged() {
+    if (!lastRemote?.stamp) return false
+    const stamp = await probeStamp(lastRemote.deviceSerial, lastRemote.remotePath, profile)
+    return stamp != null && stamp === lastRemote.stamp
+  }
+
+  async function acquire() {
+    if (watchedPath) return fsp.readFile(watchedPath)
+    const found = await uploader.acquireSaveBytes?.({ log: verbose, profile })
+    if (!found?.bytes) return null
+    if (found.deviceSerial && found.remotePath) {
+      lastRemote = {
+        deviceSerial: found.deviceSerial,
+        remotePath: found.remotePath,
+        stamp: await probeStamp(found.deviceSerial, found.remotePath, profile),
+      }
+    } else {
+      lastRemote = null
+    }
+    return found.bytes
+  }
+
+  /** @param {string} reason @param {{ force?: boolean }} [opts] force: upload even an unchanged save. */
+  async function runUpload(reason, opts = {}) {
     if (stopped) return
     if (!uploader.isAutoUploadEnabled() || !uploader.isLinked()) return
     if (running) {
@@ -46,13 +86,19 @@ export function createSaveWatcher(options = {}) {
     }
     running = true
     try {
-      // Prefer the watched file when we have one; otherwise let the uploader
-      // acquire it however this machine provides it (native install or adb).
-      const bytes = watchedPath
-        ? await fsp.readFile(watchedPath)
-        : (await uploader.acquireSaveBytes?.({ log, profile }))?.bytes
+      if (!opts.force && !watchedPath && (await remoteSaveUnchanged())) {
+        verbose(`Scan (${reason}): save unchanged, nothing pulled.`)
+        return
+      }
+      const bytes = await acquire()
       if (!bytes) return
+      const hash = hashBytes(bytes)
+      if (!opts.force && hash === lastHash) {
+        verbose(`Scan (${reason}): save unchanged, nothing uploaded.`)
+        return
+      }
       const result = await uploader.upload(bytes, { log, reason, profile })
+      lastHash = hash
       for (const message of result?.messages ?? []) {
         log(`Auto-upload (${reason}): ${message}`)
       }
@@ -129,13 +175,13 @@ export function createSaveWatcher(options = {}) {
   }
 
   /**
-   * No local file means the save is on an emulator. Poll it on a slow timer so
+   * No local file means the save is on an emulator. Check it on a slow timer so
    * emulator users get background uploads too, instead of nothing at all.
    */
   async function emulatorPoll() {
     if (stopped || watcher) return
     if (!uploader.isAutoUploadEnabled() || !uploader.isLinked()) return
-    await runUpload('emulator poll')
+    await runUpload('emulator scan')
   }
 
   return {
@@ -143,11 +189,11 @@ export function createSaveWatcher(options = {}) {
       stopped = false
       const attached = await attach()
       if (!attached) {
-        log('No local save file; will watch for one and poll any connected emulator.')
+        verbose('No local save file; will watch for one and check any connected emulator.')
       }
       rediscoverTimer = setInterval(() => void sweep(), REDISCOVER_MS)
       if (typeof rediscoverTimer.unref === 'function') rediscoverTimer.unref()
-      emulatorTimer = setInterval(() => void emulatorPoll(), EMULATOR_POLL_MS)
+      emulatorTimer = setInterval(() => void emulatorPoll(), scanIntervalMs)
       if (typeof emulatorTimer.unref === 'function') emulatorTimer.unref()
       return attached
     },
@@ -159,7 +205,9 @@ export function createSaveWatcher(options = {}) {
       detachWatcher()
     },
     /** Exposed so the website can force a pass without waiting for a file event. */
-    uploadNow: reason => runUpload(reason ?? 'requested'),
+    uploadNow: reason => runUpload(reason ?? 'requested', { force: true }),
+    /** One ordinary scan: skipped when the save has not changed. */
+    scanNow: reason => runUpload(reason ?? 'scan'),
     get watchedPath() {
       return watchedPath
     },
