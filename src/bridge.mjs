@@ -49,7 +49,8 @@ export async function startBridge(options = {}) {
 
   const bridges = []
   for (const profile of enabled) {
-    const { uploader } = await loadUploaderForProfile(profile, log)
+    // Only the CLI installs a missing plugin; embedders and tests never reach the network.
+    const { uploader } = await loadUploaderForProfile(profile, log, { install: options.installPlugins === true })
     bridges.push(startGameBridge(profile, { ...options, uploader }))
   }
 

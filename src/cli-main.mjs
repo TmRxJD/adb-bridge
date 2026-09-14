@@ -145,7 +145,7 @@ export async function runCliMain(argv = process.argv.slice(2), log = console.log
   }
 
   const { startBridge } = await import('./bridge.mjs')
-  await startBridge({ log })
+  await startBridge({ log, installPlugins: true })
 
   if (!options.daemon && !options.skipIntro) {
     log('\nLeave this terminal open while using the site.')
