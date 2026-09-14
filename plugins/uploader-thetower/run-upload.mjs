@@ -11,6 +11,7 @@ import {
   TRACKER_RUN_COLLECTION_IDS,
 } from '@tmrxjd/platform/tools'
 import { readAccountLink } from './account-link.mjs'
+import { filterBattleRuns } from './run-filters.mjs'
 import { discoverNativeHostSave, pullSave } from 'adb-bridge'
 import { towerProfile } from './profile.mjs'
 
@@ -131,7 +132,9 @@ export async function uploadRunsFromSaveBytes(bytes, options = {}) {
 
   const log = options.log ?? (() => {})
   const entries = extractBattleRunsFromSave(bytes)
-  if (entries.length === 0) return { uploaded: 0, skipped: 0, total: 0 }
+  const noneFiltered = { type: 0, wave: 0, tier: 0, coins: 0 }
+  if (entries.length === 0) return { uploaded: 0, skipped: 0, total: 0, filtered: noneFiltered, coinsNoBaseline: 0 }
+  const { kept, filtered, coinsNoBaseline } = filterBattleRuns(entries, options.filters)
 
   const client = createClient(link)
   await assertSessionValid(client)
@@ -150,7 +153,7 @@ export async function uploadRunsFromSaveBytes(bytes, options = {}) {
   let uploaded = 0
   let skipped = 0
 
-  for (const entry of entries) {
+  for (const entry of kept) {
     const dedupKey = buildBattleRunDedupKeyFromBattleEntry(entry)
     if (dedupKey && existing.has(dedupKey)) {
       skipped += 1
@@ -174,6 +177,7 @@ export async function uploadRunsFromSaveBytes(bytes, options = {}) {
     uploaded += 1
   }
 
-  log(`Uploaded ${uploaded} new run(s); ${skipped} already present.`)
-  return { uploaded, skipped, total: entries.length }
+  const filteredCount = filtered.type + filtered.wave + filtered.tier + filtered.coins
+  log(`Uploaded ${uploaded} new run(s); ${skipped} already present; ${filteredCount} left out by filters.`)
+  return { uploaded, skipped, total: entries.length, filtered, coinsNoBaseline }
 }

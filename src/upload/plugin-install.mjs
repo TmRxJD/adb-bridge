@@ -69,6 +69,47 @@ export async function importInstalledPlugin(name) {
   return entry ? import(pathToFileURL(entry).href) : null
 }
 
+/** Version of the copy in the bridge's plugins folder, or null when there is none. */
+export function installedPluginVersion(name) {
+  if (!isValidPluginName(name)) return null
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(pluginsDir(), 'node_modules', ...name.split('/'), 'package.json'), 'utf8'))
+    return typeof pkg.version === 'string' ? pkg.version : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Make sure the plugin is installed and, when automatic updates are on, current.
+ *
+ * Without this a plugin, once installed, was never updated: users kept a copy
+ * with known bugs for as long as the bridge ran. Only the copy in the bridge's
+ * own plugins folder is managed; one the user installed elsewhere is theirs.
+ * Offline or a registry error keeps what is installed.
+ *
+ * @returns {Promise<'installed' | 'updated' | 'current' | 'kept' | 'unmanaged'>}
+ */
+export async function ensurePluginCurrent(name, log = console.log, deps = {}) {
+  const fetchLatest = deps.fetchLatest ?? (async pkg => (await import('../update-check.mjs')).fetchLatestPublishedVersion(3500, pkg))
+  const compare = deps.compareVersions ?? (await import('../update-check.mjs')).compareVersions
+  const autoUpdate = deps.isAutoUpdateEnabled ?? (await import('../bridge-config.mjs')).isAutoUpdateEnabled
+  const install = deps.install ?? installPlugin
+
+  const installed = installedPluginVersion(name)
+  if (!installed) {
+    if (await findInstalledPlugin(name)) return 'unmanaged'
+    await install(name, log)
+    return 'installed'
+  }
+  if (!autoUpdate()) return 'kept'
+  const latest = await fetchLatest(name)
+  if (!latest || compare(latest, installed) <= 0) return 'current'
+  log(`Updating upload support ${installed} -> ${latest}...`)
+  await install(name, log)
+  return 'updated'
+}
+
 /** Install (or update) a plugin into the bridge's plugins folder. */
 export async function installPlugin(name, log = console.log) {
   if (!isValidPluginName(name)) throw new Error(`"${name}" is not a valid package name.`)

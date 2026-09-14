@@ -27,6 +27,11 @@ function summarize(runs, domains) {
   if (runs?.uploaded > 0) {
     messages.push(`${runs.uploaded} new run(s) sent to your tracker.`)
   }
+  const f = runs?.filtered
+  const filteredCount = f ? f.type + f.wave + f.tier + f.coins : 0
+  if (filteredCount > 0) {
+    messages.push(`${filteredCount} run(s) left out by your upload filters.`)
+  }
   if (domains?.written?.length > 0) {
     messages.push(`updated ${domains.written.join(', ')}.`)
   }
@@ -95,7 +100,7 @@ const uploader = {
     let runs = { uploaded: 0, skipped: 0, total: 0 }
     if (domainsEnabled.includes('runs')) {
       try {
-        runs = await uploadRunsFromSaveBytes(bytes, { log })
+        runs = await uploadRunsFromSaveBytes(bytes, { log, filters: options.filters })
       } catch (error) {
         log(`Run upload failed: ${error?.message || error}`)
       }

@@ -40,7 +40,7 @@
  * report the feature as unsupported rather than failing the connection.
  */
 
-import { importInstalledPlugin, installPlugin } from './plugin-install.mjs'
+import { ensurePluginCurrent, importInstalledPlugin } from './plugin-install.mjs'
 
 /** A plugin that does nothing, used whenever a game has no uploader. */
 export const NO_UPLOADER = Object.freeze({
@@ -102,11 +102,9 @@ export async function loadUploaderForProfile(profile, log = console.log, options
   } catch (error) {
     if (error?.code !== 'ERR_MODULE_NOT_FOUND') return failed(error)
     try {
+      // Install or update before importing: an ES module cannot be reloaded once imported.
+      if (options.install) await ensurePluginCurrent(profile.uploader, log)
       loaded = await importInstalledPlugin(profile.uploader)
-      if (!loaded && options.install) {
-        await installPlugin(profile.uploader, log)
-        loaded = await importInstalledPlugin(profile.uploader)
-      }
     } catch (fallbackError) {
       return failed(fallbackError)
     }

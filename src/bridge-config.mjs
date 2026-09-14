@@ -34,7 +34,48 @@ export const DEFAULT_CONFIG = Object.freeze({
   logLevel: 'normal',
   /** How often an emulator save is checked, since there is no local file to watch. */
   scanIntervalSeconds: 60,
+  /** Which runs background uploads send. Defaults send everything, as before. */
+  uploadFilters: {
+    runTypes: ['farming', 'tournament'],
+    minWave: 0,
+    farmingTierMin: null,
+    farmingTierMax: null,
+    coinsBelowMedianPct: null,
+    coinsAboveMedianPct: null,
+  },
 })
+
+export const RUN_TYPES = Object.freeze(['farming', 'tournament'])
+
+function resolveOptionalInt(value, min, max) {
+  if (value === null || value === undefined || value === '') return null
+  const number = Number(value)
+  if (!Number.isFinite(number)) return null
+  return Math.min(max, Math.max(min, Math.round(number)))
+}
+
+/**
+ * Sanitise stored or incoming upload filters. Anything unreadable falls back to
+ * "no filter", never to "filter everything" -- a bad value must not silently
+ * stop uploads.
+ */
+export function normalizeUploadFilters(raw) {
+  const source = raw && typeof raw === 'object' ? raw : {}
+  const runTypes = Array.isArray(source.runTypes)
+    ? RUN_TYPES.filter(type => source.runTypes.includes(type))
+    : [...RUN_TYPES]
+  let tierMin = resolveOptionalInt(source.farmingTierMin, 1, 99)
+  let tierMax = resolveOptionalInt(source.farmingTierMax, 1, 99)
+  if (tierMin !== null && tierMax !== null && tierMin > tierMax) [tierMin, tierMax] = [tierMax, tierMin]
+  return {
+    runTypes,
+    minWave: resolveOptionalInt(source.minWave, 0, 1_000_000) ?? 0,
+    farmingTierMin: tierMin,
+    farmingTierMax: tierMax,
+    coinsBelowMedianPct: resolveOptionalInt(source.coinsBelowMedianPct, 1, 100),
+    coinsAboveMedianPct: resolveOptionalInt(source.coinsAboveMedianPct, 1, 10_000),
+  }
+}
 
 export const LOG_LEVELS = Object.freeze(['normal', 'verbose'])
 /** Below this, each scan spawns adb often enough to be felt on a slow machine. */
@@ -71,6 +112,7 @@ export function readBridgeConfig() {
       scanIntervalSeconds: parsed.scanIntervalSeconds == null
         ? DEFAULT_CONFIG.scanIntervalSeconds
         : resolveScanIntervalSeconds(parsed.scanIntervalSeconds),
+      uploadFilters: normalizeUploadFilters(parsed.uploadFilters ?? DEFAULT_CONFIG.uploadFilters),
     }
   } catch {
     return { ...DEFAULT_CONFIG }
@@ -159,6 +201,14 @@ export function getLogLevel() {
 
 export function setLogLevel(level) {
   return writeBridgeConfig({ logLevel: LOG_LEVELS.includes(level) ? level : DEFAULT_CONFIG.logLevel })
+}
+
+export function getUploadFilters() {
+  return readBridgeConfig().uploadFilters
+}
+
+export function setUploadFilters(filters) {
+  return writeBridgeConfig({ uploadFilters: normalizeUploadFilters(filters) })
 }
 
 export function getScanIntervalSeconds() {

@@ -1,6 +1,6 @@
 {
   "name": "adb-bridge-uploader-thetower",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Background run upload for The Tower, as an adb-bridge uploader plugin.",
   "license": "GPL-3.0-or-later",
   "type": "module",
@@ -16,6 +16,7 @@
     "domain-upload.mjs",
     "profile.mjs",
     "run-upload.mjs",
+    "run-filters.mjs",
     "session-exchange.mjs",
     "README.md"
   ],

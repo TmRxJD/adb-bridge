@@ -45,11 +45,12 @@ export function compareVersions(a, b) {
 }
 
 /** Fetch the latest published version from npm, or null on any failure / timeout. */
-export async function fetchLatestPublishedVersion(timeoutMs = DEFAULT_TIMEOUT_MS) {
+export async function fetchLatestPublishedVersion(timeoutMs = DEFAULT_TIMEOUT_MS, packageName = PACKAGE_NAME) {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
+  const url = packageName === PACKAGE_NAME ? REGISTRY_URL : `https://registry.npmjs.org/${packageName}/latest`
   try {
-    const response = await fetch(REGISTRY_URL, {
+    const response = await fetch(url, {
       signal: controller.signal,
       headers: { accept: 'application/json' },
     })

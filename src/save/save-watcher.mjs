@@ -4,7 +4,7 @@ import fsp from 'node:fs/promises'
 import { discoverNativeHostSave } from './native-save-discovery.mjs'
 import { probeRemoteSaveStamp } from './pull-save.mjs'
 import { NO_UPLOADER } from '../upload/uploader-plugin.mjs'
-import { getScanIntervalSeconds, getUploadDomains } from '../bridge-config.mjs'
+import { getScanIntervalSeconds, getUploadDomains, getUploadFilters } from '../bridge-config.mjs'
 import { isVerboseLogging } from '../log-level.mjs'
 
 /**
@@ -32,7 +32,7 @@ export function createSaveWatcher(options = {}) {
     if (isVerboseLogging()) log(message)
   }
   const debounceMs = options.debounceMs ?? DEBOUNCE_MS
-  const scanIntervalMs = options.scanIntervalMs ?? getScanIntervalSeconds() * 1000
+  let scanIntervalMs = options.scanIntervalMs ?? getScanIntervalSeconds() * 1000
   const probeStamp = options.probeRemoteSaveStamp ?? probeRemoteSaveStamp
   // Injected rather than imported: the core must not depend on any one game's
   // save format or backend. See upload/uploader-plugin.mjs.
@@ -97,7 +97,13 @@ export function createSaveWatcher(options = {}) {
         verbose(`Scan (${reason}): save unchanged, nothing uploaded.`)
         return
       }
-      const result = await uploader.upload(bytes, { log, reason, profile, domains: getUploadDomains() })
+      const result = await uploader.upload(bytes, {
+        log,
+        reason,
+        profile,
+        domains: getUploadDomains(),
+        filters: getUploadFilters(),
+      })
       lastHash = hash
       for (const message of result?.messages ?? []) {
         log(`Auto-upload (${reason}): ${message}`)
@@ -203,6 +209,18 @@ export function createSaveWatcher(options = {}) {
       clearInterval(rediscoverTimer)
       clearInterval(emulatorTimer)
       detachWatcher()
+    },
+    /** Change how often the emulator is checked, taking effect immediately. */
+    setScanInterval(ms) {
+      if (!Number.isFinite(ms) || ms <= 0) return
+      scanIntervalMs = ms
+      if (!emulatorTimer) return
+      clearInterval(emulatorTimer)
+      emulatorTimer = setInterval(() => void emulatorPoll(), scanIntervalMs)
+      if (typeof emulatorTimer.unref === 'function') emulatorTimer.unref()
+    },
+    get scanIntervalMs() {
+      return scanIntervalMs
     },
     /** Exposed so the website can force a pass without waiting for a file event. */
     uploadNow: reason => runUpload(reason ?? 'requested', { force: true }),

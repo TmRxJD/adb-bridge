@@ -14,11 +14,15 @@ import { effectiveOrigins } from './origins.mjs'
 import { NO_UPLOADER, supportsLinking } from './upload/uploader-plugin.mjs'
 import {
   getLastDevice,
+  getScanIntervalSeconds,
   getUploadDomains,
+  getUploadFilters,
   isAutoConnectEnabled,
   setAutoConnectEnabled,
   setLastDevice,
+  setScanIntervalSeconds,
   setUploadDomains,
+  setUploadFilters,
 } from './bridge-config.mjs'
 import { BridgePullConsole } from './bridge-console.mjs'
 import { isVerboseLogging } from './log-level.mjs'
@@ -71,8 +75,10 @@ export const BRIDGE_VERSION = require_('../package.json').version
  * 1: HELLO/PONG carrying version, PULL_SAVE returning base64, upload handover.
  * 2: LINK_ACCOUNT carries a one-time `linkToken` the bridge exchanges for its
  *    own session, instead of the browser's session secret.
+ * 3: SET_UPLOAD_FILTERS and SET_SCAN_INTERVAL; PONG/SETTINGS report
+ *    `uploadFilters` and `scanIntervalSeconds`. Additive: pulls are unchanged.
  */
-export const BRIDGE_PROTOCOL_VERSION = 2
+export const BRIDGE_PROTOCOL_VERSION = 3
 
 /** Lets a client tell which bridge it is talking to, across renames. */
 export const BRIDGE_PRODUCT = 'adb-bridge'
@@ -101,6 +107,8 @@ function settingsSnapshot(ctx) {
     autoConnect: isAutoConnectEnabled(),
     lastDevice: getLastDevice(),
     uploadDomains: getUploadDomains(),
+    uploadFilters: getUploadFilters(),
+    scanIntervalSeconds: getScanIntervalSeconds(),
     watchedPath: ctx.saveWatcher?.watchedPath ?? null,
   }
 }
@@ -154,6 +162,8 @@ function attachWebSocketHandlers(wss, ctx) {
           autoConnect: isAutoConnectEnabled(),
           lastDevice: getLastDevice(),
           uploadDomains: getUploadDomains(),
+          uploadFilters: getUploadFilters(),
+          scanIntervalSeconds: getScanIntervalSeconds(),
         })
         return
       }
@@ -226,6 +236,20 @@ function attachWebSocketHandlers(wss, ctx) {
         return
       }
 
+      if (message?.type === 'SET_UPLOAD_FILTERS') {
+        setUploadFilters(message.filters)
+        sendJson(ws, { type: 'SETTINGS', ...settingsSnapshot(ctx) })
+        return
+      }
+
+      // Applied to the running watcher too, so a change needs no restart.
+      if (message?.type === 'SET_SCAN_INTERVAL') {
+        const next = setScanIntervalSeconds(message.seconds)
+        ctx.saveWatcher?.setScanInterval?.(next.scanIntervalSeconds * 1000)
+        sendJson(ws, { type: 'SETTINGS', ...settingsSnapshot(ctx) })
+        return
+      }
+
       // Lets the site trigger a pass immediately instead of waiting for the
       // game to write the save again.
       if (message?.type === 'UPLOAD_NOW') {
@@ -254,6 +278,7 @@ function attachWebSocketHandlers(wss, ctx) {
             reason: 'requested',
             profile,
             domains: getUploadDomains(),
+            filters: getUploadFilters(),
           })
           sendJson(ws, { type: 'UPLOAD_RESULT', ...result, source: found.source })
         } catch (error) {

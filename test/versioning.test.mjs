@@ -39,10 +39,10 @@ test('the update check targets this package, not a hardcoded former name', async
 
 test('the protocol version is what compatibility hangs on, and is stable', () => {
   // Deliberately pinned. 2 changed only LINK_ACCOUNT (a one-time link token
-  // instead of the browser's session), so the website keeps accepting 1 for
-  // pulls (LOCAL_ADB_BRIDGE_MIN_PROTOCOL) and gates linking alone on 2
-  // (BRIDGE_LINK_TOKEN_MIN_PROTOCOL). A change that breaks pulls must raise both.
-  assert.equal(BRIDGE_PROTOCOL_VERSION, 2)
+  // instead of the browser's session); 3 only added filter and scan-interval
+  // messages. The website keeps accepting 1 for pulls (LOCAL_ADB_BRIDGE_MIN_PROTOCOL)
+  // and gates each feature on its own number. A change that breaks pulls must raise both.
+  assert.equal(BRIDGE_PROTOCOL_VERSION, 3)
   assert.equal(typeof BRIDGE_PROTOCOL_VERSION, 'number')
 })
 
