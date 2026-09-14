@@ -2,8 +2,10 @@ import {
   clearAccountLink,
   describeAccountLink,
   isAccountLinked,
+  readAccountLink,
   writeAccountLink,
 } from './account-link.mjs'
+import { exchangeLinkToken, revokeBridgeSession } from './session-exchange.mjs'
 import {
   getUploadDomains,
   isAutoUploadEnabled,
@@ -48,24 +50,36 @@ const uploader = {
   describeLink: () => describeAccountLink(),
 
   /**
-   * Store the Appwrite session the website hands over.
+   * Exchange the website's one-time link token for this bridge's own session.
    *
-   * The secret grants full account access, so account-link.mjs writes it 0600
-   * and ACL-restricts it on Windows. The site lists it under Linked devices and
-   * can revoke it at any time.
+   * The session grants full account access, so account-link.mjs writes it 0600
+   * and ACL-restricts it on Windows. It appears in the account's session list
+   * and can be revoked there, or by unlinking.
    */
   async link(payload) {
-    writeAccountLink({
+    const exchanged = await exchangeLinkToken({
       endpoint: payload?.endpoint,
       projectId: payload?.projectId,
-      sessionSecret: payload?.sessionSecret,
-      userId: payload?.userId,
-      username: payload?.username,
+      userId: payload?.linkToken?.userId,
+      secret: payload?.linkToken?.secret,
     })
+    // Replacing an existing link: drop the old session rather than orphaning it.
+    const previous = readAccountLink()
+    writeAccountLink({
+      endpoint: payload.endpoint,
+      projectId: payload.projectId,
+      sessionSecret: exchanged.sessionSecret,
+      userId: exchanged.userId,
+      username: exchanged.username ?? payload?.username,
+    })
+    if (previous && previous.sessionSecret !== exchanged.sessionSecret) {
+      await revokeBridgeSession(previous)
+    }
     return describeAccountLink()
   },
 
   async unlink() {
+    await revokeBridgeSession(readAccountLink())
     clearAccountLink()
   },
 

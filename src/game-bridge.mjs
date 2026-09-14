@@ -69,8 +69,10 @@ export const BRIDGE_VERSION = require_('../package.json').version
  * there is nothing to remember to bump.
  *
  * 1: HELLO/PONG carrying version, PULL_SAVE returning base64, upload handover.
+ * 2: LINK_ACCOUNT carries a one-time `linkToken` the bridge exchanges for its
+ *    own session, instead of the browser's session secret.
  */
-export const BRIDGE_PROTOCOL_VERSION = 1
+export const BRIDGE_PROTOCOL_VERSION = 2
 
 /** Lets a client tell which bridge it is talking to, across renames. */
 export const BRIDGE_PRODUCT = 'adb-bridge'
