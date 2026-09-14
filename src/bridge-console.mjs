@@ -1,4 +1,11 @@
-/** Terminal progress for PULL_SAVE — visible in the bridge window only (not the website). */
+import { isVerboseLogging } from './log-level.mjs'
+
+/**
+ * Terminal progress for PULL_SAVE — visible in the bridge window only (not the website).
+ *
+ * Only the finished line prints by default; the intermediate steps are verbose
+ * detail. Errors always print.
+ */
 
 export function formatProgressBar(ratio, width = 28) {
   const clamped = Math.max(0, Math.min(1, ratio))
@@ -19,6 +26,7 @@ export class BridgePullConsole {
     this.step = Math.min(this.step + 1, this.totalSteps)
     const ratio =
       ratioOverride ?? (this.totalSteps > 0 ? this.step / this.totalSteps : 1)
+    if (ratio < 1 && !isVerboseLogging()) return
     const prefix = this.physical ? 'USB pull' : 'ADB pull'
     console.log(`${formatProgressBar(ratio)} ${prefix}: ${label}`)
   }

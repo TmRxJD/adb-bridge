@@ -21,6 +21,7 @@ import {
   setUploadDomains,
 } from './bridge-config.mjs'
 import { BridgePullConsole } from './bridge-console.mjs'
+import { isVerboseLogging } from './log-level.mjs'
 import {
   BridgeNoDeviceError,
   BridgeSaveNotFoundError,
@@ -234,7 +235,9 @@ function attachWebSocketHandlers(wss, ctx) {
           // Checks a native install first, then falls back to an adb pull, so
           // this works for emulator users exactly like Connect to Emulator does.
           const found = await uploader.acquireSaveBytes?.({
-            log: msg => console.log(msg),
+            log: msg => {
+              if (isVerboseLogging()) console.log(msg)
+            },
             console: consoleUi,
             profile,
           })

@@ -27,7 +27,26 @@ export const DEFAULT_CONFIG = Object.freeze({
    * is on by default for everyone, and their choices still persist.
    */
   disabledDomains: [],
+  /**
+   * 'normal' prints uploads, errors and link changes. 'verbose' adds every pull
+   * step and every scan. A background process that narrates each minute buries
+   * the one line that matters.
+   */
+  logLevel: 'normal',
+  /** How often an emulator save is checked, since there is no local file to watch. */
+  scanIntervalSeconds: 60,
 })
+
+export const LOG_LEVELS = Object.freeze(['normal', 'verbose'])
+/** Below this, each scan spawns adb often enough to be felt on a slow machine. */
+export const MIN_SCAN_INTERVAL_SECONDS = 15
+export const MAX_SCAN_INTERVAL_SECONDS = 3600
+
+function resolveScanIntervalSeconds(value) {
+  const seconds = Number(value)
+  if (!Number.isFinite(seconds)) return DEFAULT_CONFIG.scanIntervalSeconds
+  return Math.min(MAX_SCAN_INTERVAL_SECONDS, Math.max(MIN_SCAN_INTERVAL_SECONDS, Math.round(seconds)))
+}
 
 export function getConfigPath() {
   return CONFIG_PATH
@@ -51,6 +70,10 @@ export function readBridgeConfig() {
       lastDevice:
         typeof parsed.lastDevice === 'string' ? parsed.lastDevice : DEFAULT_CONFIG.lastDevice,
       disabledDomains: resolveDisabledDomains(parsed),
+      logLevel: LOG_LEVELS.includes(parsed.logLevel) ? parsed.logLevel : DEFAULT_CONFIG.logLevel,
+      scanIntervalSeconds: parsed.scanIntervalSeconds == null
+        ? DEFAULT_CONFIG.scanIntervalSeconds
+        : resolveScanIntervalSeconds(parsed.scanIntervalSeconds),
     }
   } catch {
     return { ...DEFAULT_CONFIG }
@@ -131,6 +154,22 @@ export function setUploadDomains(domains) {
   return writeBridgeConfig({
     disabledDomains: ALL_UPLOAD_DOMAINS.filter(domain => !enabled.has(domain)),
   })
+}
+
+export function getLogLevel() {
+  return readBridgeConfig().logLevel
+}
+
+export function setLogLevel(level) {
+  return writeBridgeConfig({ logLevel: LOG_LEVELS.includes(level) ? level : DEFAULT_CONFIG.logLevel })
+}
+
+export function getScanIntervalSeconds() {
+  return readBridgeConfig().scanIntervalSeconds
+}
+
+export function setScanIntervalSeconds(seconds) {
+  return writeBridgeConfig({ scanIntervalSeconds: resolveScanIntervalSeconds(seconds) })
 }
 
 export function isAutoUploadEnabled() {

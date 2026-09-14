@@ -400,6 +400,39 @@ function shellQuote(value) {
   return `'${String(value).replace(/'/g, `'\\''`)}'`
 }
 
+/**
+ * A cheap fingerprint of a save already located on a device: modified time and
+ * size from one `stat`, without transferring the file.
+ *
+ * `remotePath` is whatever a pull reported. The run-as forms name a package rather
+ * than a readable path, so those stat each candidate filename inside the app.
+ * Returns null when the device cannot answer; callers must then pull, never
+ * assume the save is unchanged.
+ *
+ * @returns {Promise<string | null>}
+ */
+export async function probeRemoteSaveStamp(serial, remotePath, profile) {
+  if (!serial || !remotePath) return null
+  const statOf = file => `stat -c %y:%s ${shellQuote(file)} 2>/dev/null`
+  const runAs = /^(?:run-as|staging-tmp):([^/]+)/.exec(remotePath)
+  let command
+  if (runAs) {
+    if (!profile) return null
+    const chain = saveFilenamesFor(profile).map(name => statOf(`files/${name}`)).join(' || ')
+    command = `run-as ${shellQuote(runAs[1])} sh -c ${shellQuote(chain)}`
+  } else {
+    command = statOf(remotePath)
+  }
+  try {
+    const out = await runAdb(serial, ['shell', command], ADB_PATH_PROBE_TIMEOUT_MS)
+    const line = out.split(/\r?\n/).map(s => s.trim()).find(Boolean)
+    // A stat line always ends in ":<size>"; anything else is an error message.
+    return line && /:\d+$/.test(line) ? line : null
+  } catch {
+    return null
+  }
+}
+
 async function findSavePaths(serial, profile, { includeDataData = false } = {}) {
   const roots = includeDataData
     ? ['/data/data', '/sdcard', '/storage/emulated/0']

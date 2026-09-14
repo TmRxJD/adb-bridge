@@ -65,6 +65,9 @@ export async function acquireSaveBytes(options = {}) {
       return {
         bytes: Buffer.from(pulled.base64, 'base64'),
         source: pulled.deviceLabel || pulled.deviceSerial || 'emulator',
+        // Lets the watcher check this exact file cheaply next time instead of pulling it again.
+        deviceSerial: pulled.deviceSerial,
+        remotePath: pulled.remotePath,
       }
     }
   } catch (error) {
