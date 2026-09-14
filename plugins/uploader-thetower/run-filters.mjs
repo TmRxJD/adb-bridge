@@ -34,7 +34,7 @@ function median(values) {
 
 /**
  * @param {object[]} entries battle-history entries
- * @param {object} [filters] normalised upload filters (bridge-config normalizeUploadFilters)
+ * @param {object} [filters] normalised settings (config.mjs normalizeSettings)
  * @returns {{ kept: object[], filtered: { type: number, wave: number, tier: number, coins: number }, coinsNoBaseline: number }}
  */
 export function filterBattleRuns(entries, filters) {

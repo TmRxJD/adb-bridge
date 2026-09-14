@@ -15,15 +15,12 @@ import { NO_UPLOADER, supportsLinking } from './upload/uploader-plugin.mjs'
 import {
   getLastDevice,
   getScanIntervalSeconds,
-  getUploadDomains,
-  getUploadFilters,
   isAutoConnectEnabled,
   setAutoConnectEnabled,
   setLastDevice,
   setScanIntervalSeconds,
-  setUploadDomains,
-  setUploadFilters,
 } from './bridge-config.mjs'
+import { normalizeSettingsSchema, supportsSettings } from './upload/settings-schema.mjs'
 import { BridgePullConsole } from './bridge-console.mjs'
 import { isVerboseLogging } from './log-level.mjs'
 import { getActivity, recordSaveRead, recordUpload, recordUploadError } from './activity.mjs'
@@ -78,8 +75,11 @@ export const BRIDGE_VERSION = require_('../package.json').version
  *    own session, instead of the browser's session secret.
  * 3: SET_UPLOAD_FILTERS and SET_SCAN_INTERVAL; PONG/SETTINGS report
  *    `uploadFilters` and `scanIntervalSeconds`. Additive: pulls are unchanged.
+ * 4: GET_GAME_SETTINGS / SET_GAME_SETTINGS relay a plugin's own declared
+ *    settings; PONG adds `settings` and `siteUrl`. Protocol-3 messages still
+ *    work, now writing the plugin's settings. Additive.
  */
-export const BRIDGE_PROTOCOL_VERSION = 3
+export const BRIDGE_PROTOCOL_VERSION = 4
 
 /** Lets a client tell which bridge it is talking to, across renames. */
 export const BRIDGE_PRODUCT = 'adb-bridge'
@@ -98,6 +98,19 @@ async function runAdb(args, timeoutMs = 120_000) {
   }
 }
 
+/**
+ * The plugin's settings, for status replies.
+ *
+ * `settings` is the generic form. `uploadDomains` / `uploadFilters` are the
+ * shape protocol-3 sites read; they are the plugin's own values, passed through
+ * (a plugin that names its domain list `domains` gets it reported there).
+ */
+function pluginSettingsView(uploader) {
+  if (!supportsSettings(uploader)) return { settings: null }
+  const values = uploader.getSettings()
+  return { settings: values, uploadDomains: values.domains, uploadFilters: values }
+}
+
 /** Everything the website's bridge settings dialog renders from. */
 function settingsSnapshot(ctx) {
   return {
@@ -107,8 +120,7 @@ function settingsSnapshot(ctx) {
     autoUpload: ctx.uploader.isAutoUploadEnabled(),
     autoConnect: isAutoConnectEnabled(),
     lastDevice: getLastDevice(),
-    uploadDomains: getUploadDomains(),
-    uploadFilters: getUploadFilters(),
+    ...pluginSettingsView(ctx.uploader),
     scanIntervalSeconds: getScanIntervalSeconds(),
     activity: getActivity(ctx.profile.id),
     watchedPath: ctx.saveWatcher?.watchedPath ?? null,
@@ -163,10 +175,10 @@ function attachWebSocketHandlers(wss, ctx) {
           autoUpload: uploader.isAutoUploadEnabled(),
           autoConnect: isAutoConnectEnabled(),
           lastDevice: getLastDevice(),
-          uploadDomains: getUploadDomains(),
-          uploadFilters: getUploadFilters(),
+          ...pluginSettingsView(uploader),
           scanIntervalSeconds: getScanIntervalSeconds(),
           activity: getActivity(profile.id),
+          siteUrl: profile.siteUrl,
         })
         return
       }
@@ -233,14 +245,45 @@ function attachWebSocketHandlers(wss, ctx) {
         return
       }
 
-      if (message?.type === 'SET_UPLOAD_DOMAINS') {
-        setUploadDomains(message.domains ?? [])
-        sendJson(ws, { type: 'SETTINGS', ...settingsSnapshot(ctx) })
+      // A game's settings, schema and values, for the tray's settings window.
+      if (message?.type === 'GET_GAME_SETTINGS' || message?.type === 'SET_GAME_SETTINGS') {
+        if (!supportsSettings(uploader)) {
+          sendJson(ws, {
+            type: 'ERROR',
+            code: 'settings-unsupported',
+            message: `${profile.name} has no settings on this bridge.`,
+          })
+          return
+        }
+        if (message.type === 'SET_GAME_SETTINGS') {
+          await uploader.setSettings(message.values && typeof message.values === 'object' ? message.values : {})
+        }
+        sendJson(ws, {
+          type: 'GAME_SETTINGS',
+          game: profile.id,
+          gameName: profile.name,
+          schema: normalizeSettingsSchema(uploader.settingsSchema, msg => console.log(`[${profile.id}] ${msg}`)),
+          values: uploader.getSettings(),
+        })
         return
       }
 
-      if (message?.type === 'SET_UPLOAD_FILTERS') {
-        setUploadFilters(message.filters)
+      // Protocol-3 messages from sites that predate GET/SET_GAME_SETTINGS. They
+      // write the plugin's own settings, the same store the tray edits.
+      if (message?.type === 'SET_UPLOAD_DOMAINS' || message?.type === 'SET_UPLOAD_FILTERS') {
+        if (!supportsSettings(uploader)) {
+          sendJson(ws, {
+            type: 'ERROR',
+            code: 'settings-unsupported',
+            message: `${profile.name} has no upload settings on this bridge.`,
+          })
+          return
+        }
+        await uploader.setSettings(
+          message.type === 'SET_UPLOAD_DOMAINS'
+            ? { domains: Array.isArray(message.domains) ? message.domains : [] }
+            : (message.filters && typeof message.filters === 'object' ? message.filters : {}),
+        )
         sendJson(ws, { type: 'SETTINGS', ...settingsSnapshot(ctx) })
         return
       }
@@ -281,8 +324,6 @@ function attachWebSocketHandlers(wss, ctx) {
             log: msg => console.log(msg),
             reason: 'requested',
             profile,
-            domains: getUploadDomains(),
-            filters: getUploadFilters(),
           })
           recordUpload(profile.id, result)
           sendJson(ws, { type: 'UPLOAD_RESULT', ...result, source: found.source })

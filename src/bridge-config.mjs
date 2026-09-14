@@ -7,9 +7,14 @@ const CONFIG_DIR = path.join(os.homedir(), '.local-adb-bridge')
 const CONFIG_PATH = path.join(CONFIG_DIR, 'config.json')
 
 /**
+ * Settings shared by every game.
+ *
+ * Anything about one game -- what it uploads, how its runs are filtered, whether
+ * it auto-uploads -- belongs to that game's uploader plugin, which declares it
+ * (see upload/settings-schema.mjs). One game's concepts living here is how a
+ * Tower-only "upload domains" list once applied to every game on the bridge.
+ *
  * Auto-update is ON out of the box; the bridge updates itself and says so.
- * Auto-upload is not here: each game's uploader plugin owns it, so turning it on
- * for one game cannot turn it on for another.
  */
 export const DEFAULT_CONFIG = Object.freeze({
   autoUpdate: true,
@@ -18,15 +23,6 @@ export const DEFAULT_CONFIG = Object.freeze({
   /** 'emulator' | 'usb' | 'mac' — whichever connect the user last succeeded with. */
   lastDevice: null,
   /**
-   * Opt-OUTs, not opt-ins.
-   *
-   * Storing the enabled list meant a config written before a domain existed
-   * could never enable it — relics and lifetime stayed invisible to anyone with
-   * an older config. Recording only what the user turned off means a new domain
-   * is on by default for everyone, and their choices still persist.
-   */
-  disabledDomains: [],
-  /**
    * 'normal' prints uploads, errors and link changes. 'verbose' adds every pull
    * step and every scan. A background process that narrates each minute buries
    * the one line that matters.
@@ -34,48 +30,7 @@ export const DEFAULT_CONFIG = Object.freeze({
   logLevel: 'normal',
   /** How often an emulator save is checked, since there is no local file to watch. */
   scanIntervalSeconds: 60,
-  /** Which runs background uploads send. Defaults send everything, as before. */
-  uploadFilters: {
-    runTypes: ['farming', 'tournament'],
-    minWave: 0,
-    farmingTierMin: null,
-    farmingTierMax: null,
-    coinsBelowMedianPct: null,
-    coinsAboveMedianPct: null,
-  },
 })
-
-export const RUN_TYPES = Object.freeze(['farming', 'tournament'])
-
-function resolveOptionalInt(value, min, max) {
-  if (value === null || value === undefined || value === '') return null
-  const number = Number(value)
-  if (!Number.isFinite(number)) return null
-  return Math.min(max, Math.max(min, Math.round(number)))
-}
-
-/**
- * Sanitise stored or incoming upload filters. Anything unreadable falls back to
- * "no filter", never to "filter everything" -- a bad value must not silently
- * stop uploads.
- */
-export function normalizeUploadFilters(raw) {
-  const source = raw && typeof raw === 'object' ? raw : {}
-  const runTypes = Array.isArray(source.runTypes)
-    ? RUN_TYPES.filter(type => source.runTypes.includes(type))
-    : [...RUN_TYPES]
-  let tierMin = resolveOptionalInt(source.farmingTierMin, 1, 99)
-  let tierMax = resolveOptionalInt(source.farmingTierMax, 1, 99)
-  if (tierMin !== null && tierMax !== null && tierMin > tierMax) [tierMin, tierMax] = [tierMax, tierMin]
-  return {
-    runTypes,
-    minWave: resolveOptionalInt(source.minWave, 0, 1_000_000) ?? 0,
-    farmingTierMin: tierMin,
-    farmingTierMax: tierMax,
-    coinsBelowMedianPct: resolveOptionalInt(source.coinsBelowMedianPct, 1, 100),
-    coinsAboveMedianPct: resolveOptionalInt(source.coinsAboveMedianPct, 1, 10_000),
-  }
-}
 
 export const LOG_LEVELS = Object.freeze(['normal', 'verbose'])
 /** Below this, each scan spawns adb often enough to be felt on a slow machine. */
@@ -92,7 +47,7 @@ export function getConfigPath() {
   return CONFIG_PATH
 }
 
-/** @returns {{ autoUpdate: boolean }} stored prefs merged over the defaults. */
+/** Stored prefs merged over the defaults. Unknown keys in the file are carried through. */
 export function readBridgeConfig() {
   try {
     const raw = fs.readFileSync(CONFIG_PATH, 'utf8')
@@ -107,12 +62,10 @@ export function readBridgeConfig() {
         typeof parsed.autoConnect === 'boolean' ? parsed.autoConnect : DEFAULT_CONFIG.autoConnect,
       lastDevice:
         typeof parsed.lastDevice === 'string' ? parsed.lastDevice : DEFAULT_CONFIG.lastDevice,
-      disabledDomains: resolveDisabledDomains(parsed),
       logLevel: LOG_LEVELS.includes(parsed.logLevel) ? parsed.logLevel : DEFAULT_CONFIG.logLevel,
       scanIntervalSeconds: parsed.scanIntervalSeconds == null
         ? DEFAULT_CONFIG.scanIntervalSeconds
         : resolveScanIntervalSeconds(parsed.scanIntervalSeconds),
-      uploadFilters: normalizeUploadFilters(parsed.uploadFilters ?? DEFAULT_CONFIG.uploadFilters),
     }
   } catch {
     return { ...DEFAULT_CONFIG }
@@ -155,60 +108,12 @@ export function setLastDevice(device) {
   return writeBridgeConfig({ lastDevice: device ? String(device) : null })
 }
 
-/** Every domain the bridge can upload, in import-page tab order. */
-export const ALL_UPLOAD_DOMAINS = Object.freeze([
-  'runs', 'workshop', 'labs', 'uw', 'modules',
-  'cards', 'vault', 'bots', 'guardian', 'relics', 'lifetime',
-])
-
-/**
- * Migrate a legacy `uploadDomains` (enabled list) to opt-outs, so an existing
- * config keeps the user's choices without freezing them out of new domains.
- */
-function resolveDisabledDomains(parsed) {
-  if (Array.isArray(parsed.disabledDomains)) {
-    return parsed.disabledDomains.filter(d => typeof d === 'string')
-  }
-  if (Array.isArray(parsed.uploadDomains)) {
-    const enabled = new Set(parsed.uploadDomains.filter(d => typeof d === 'string'))
-    // Only treat a domain as disabled if it existed when that config was
-    // written; anything newer stays enabled.
-    return ALL_UPLOAD_DOMAINS.filter(d => !enabled.has(d) && KNOWN_LEGACY_DOMAINS.has(d))
-  }
-  return []
-}
-
-/** Domains that existed while `uploadDomains` was still the stored shape. */
-const KNOWN_LEGACY_DOMAINS = new Set([
-  'runs', 'workshop', 'labs', 'cards', 'modules', 'bots', 'guardian', 'vault', 'uw',
-])
-
-export function getUploadDomains() {
-  const disabled = new Set(readBridgeConfig().disabledDomains ?? [])
-  return ALL_UPLOAD_DOMAINS.filter(domain => !disabled.has(domain))
-}
-
-export function setUploadDomains(domains) {
-  const enabled = new Set(Array.isArray(domains) ? domains.filter(d => typeof d === 'string') : [])
-  return writeBridgeConfig({
-    disabledDomains: ALL_UPLOAD_DOMAINS.filter(domain => !enabled.has(domain)),
-  })
-}
-
 export function getLogLevel() {
   return readBridgeConfig().logLevel
 }
 
 export function setLogLevel(level) {
   return writeBridgeConfig({ logLevel: LOG_LEVELS.includes(level) ? level : DEFAULT_CONFIG.logLevel })
-}
-
-export function getUploadFilters() {
-  return readBridgeConfig().uploadFilters
-}
-
-export function setUploadFilters(filters) {
-  return writeBridgeConfig({ uploadFilters: normalizeUploadFilters(filters) })
 }
 
 export function getScanIntervalSeconds() {
@@ -218,4 +123,3 @@ export function getScanIntervalSeconds() {
 export function setScanIntervalSeconds(seconds) {
   return writeBridgeConfig({ scanIntervalSeconds: resolveScanIntervalSeconds(seconds) })
 }
-

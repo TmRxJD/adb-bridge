@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { serializeUploads } from '../src/upload/uploader-plugin.mjs'
-import { createSaveWatcher } from '../src/save/save-watcher.mjs'
 
 /**
  * Two upload passes must never overlap.
@@ -44,24 +43,4 @@ test('a failed upload does not block the next one', async () => {
   })
   await assert.rejects(wrapped.upload('x'), /boom/)
   assert.deepEqual((await wrapped.upload('y')).messages, ['ok'])
-})
-
-test('the watcher hands the bridge domain list to the plugin', async () => {
-  let received
-  const watcher = createSaveWatcher({
-    log: () => {},
-    probeRemoteSaveStamp: async () => null,
-    uploader: {
-      isLinked: () => true,
-      isAutoUploadEnabled: () => true,
-      acquireSaveBytes: async () => ({ bytes: Buffer.from('save') }),
-      upload: async (_bytes, options) => {
-        received = options
-        return { messages: [] }
-      },
-    },
-  })
-  await watcher.scanNow()
-  assert.ok(Array.isArray(received?.domains), 'domains must be passed, or the plugin falls back to runs only')
-  assert.ok(received.domains.includes('runs'))
 })

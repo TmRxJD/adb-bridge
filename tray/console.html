@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>ADB Bridge — Console</title>
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'" />
+    <style>
+      :root { color-scheme: dark; }
+      body { margin: 0; background: #121212; color: #e0e0e0; font: 12px/1.45 Consolas, 'Cascadia Mono', monospace; }
+      #log { margin: 0; padding: 12px; white-space: pre-wrap; word-break: break-word; }
+    </style>
+  </head>
+  <body>
+    <pre id="log"></pre>
+    <script>
+      const logEl = document.getElementById('log')
+      const append = line => {
+        const atBottom = window.innerHeight + window.scrollY >= document.body.scrollHeight - 8
+        logEl.textContent += `${line}\n`
+        if (atBottom) window.scrollTo(0, document.body.scrollHeight)
+      }
+      window.bridgeTray.consoleBuffer().then(({ lines, external }) => {
+        if (external) append('The bridge is running in another process, so only the tray\'s own messages appear here.')
+        for (const line of lines) append(line)
+        window.bridgeTray.onLog(append)
+      })
+    </script>
+  </body>
+</html>

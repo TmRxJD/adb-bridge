@@ -7,6 +7,29 @@
  * until an emulator test hit it. `no-undef` catches exactly that, statically.
  */
 export default [
+  { ignores: ['tray/out/**', 'tray/node_modules/**'] },
+  {
+    // The tray app's Electron main process: CommonJS.
+    files: ['tray/**/*.js'],
+    languageOptions: {
+      ecmaVersion: 2023,
+      sourceType: 'commonjs',
+      globals: {
+        require: 'readonly',
+        module: 'writable',
+        __dirname: 'readonly',
+        console: 'writable',
+        process: 'readonly',
+        setTimeout: 'readonly',
+        clearTimeout: 'readonly',
+        setInterval: 'readonly',
+      },
+    },
+    rules: {
+      'no-undef': 'error',
+      'no-unused-vars': ['error', { args: 'none', varsIgnorePattern: '^_' }],
+    },
+  },
   {
     files: ['src/**/*.mjs', 'bin/**/*.js', 'scripts/**/*.mjs', 'plugins/**/*.mjs', 'shims/**/*.mjs', 'installer/**/*.mjs'],
     languageOptions: {

@@ -22,10 +22,9 @@
  *   acquireSaveBytes({ log }): Promise<{ bytes: Buffer } | null>
  *     Fetch the save when the watcher has no local file to read.
  *
- *   upload(bytes, { log, reason, domains }): Promise<{ messages?: string[] }>
- *     Do the upload. `domains` is the bridge's list of what the user allows
- *     uploading; the bridge owns that setting, not the plugin.
- *     Return human-readable lines to log, if any.
+ *   upload(bytes, { log, reason }): Promise<{ messages?: string[] }>
+ *     Do the upload, honouring the plugin's own settings (what to upload, how
+ *     runs are filtered). Return human-readable lines to log, if any.
  *     Must not throw for ordinary failures -- report them in messages.
  *
  * And, if it supports linking an account:
@@ -34,6 +33,15 @@
  *   link(payload): Promise<object>    Store a link; returns describeLink().
  *   unlink(): Promise<void>
  *   setAutoUpload(enabled): Promise<void>
+ *
+ * And, if it has per-game settings (see settings-schema.mjs):
+ *
+ *   settingsSchema: field[]           What the tray's settings window draws.
+ *   getSettings(): object             Current values, keyed by field key.
+ *   setSettings(patch): Promise<object>  Validate, persist, return all values.
+ *
+ * A game's settings belong to its plugin. The bridge core only relays them, so
+ * one game's options never leak into another's.
  *
  * The LINK_ACCOUNT / UNLINK_ACCOUNT / SET_AUTO_UPLOAD / UPLOAD_NOW protocol
  * messages are answered from these. A plugin without them makes the bridge

@@ -165,6 +165,23 @@ export function normalizeGameProfile(input, options = {}) {
     })
   }
 
+  // Where the tray's "open site" goes. Optional: without it, the first https
+  // origin the game allows is its site.
+  let siteUrl = null
+  if (input.siteUrl !== undefined && input.siteUrl !== null) {
+    let parsed
+    try {
+      parsed = new URL(input.siteUrl)
+    } catch {
+      fail('"siteUrl" must be a full URL, e.g. "https://example.com"', source)
+    }
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+      fail('"siteUrl" must be an http(s) URL', source)
+    }
+    siteUrl = parsed.href
+  }
+  siteUrl ??= allowedOrigins.find(origin => origin.startsWith('https://')) ?? null
+
   let uploader = null
   if (input.uploader !== undefined && input.uploader !== null) {
     if (typeof input.uploader !== 'string' || !input.uploader.trim()) {
@@ -184,6 +201,7 @@ export function normalizeGameProfile(input, options = {}) {
     allowedOrigins: Object.freeze(allowedOrigins),
     nativeHost,
     uploader,
+    siteUrl,
     builtin: options.builtin === true,
     source: source ?? null,
   })

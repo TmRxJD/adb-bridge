@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { filterBattleRuns, MIN_BASELINE_RUNS } from '../plugins/uploader-thetower/run-filters.mjs'
-import { normalizeUploadFilters } from '../src/bridge-config.mjs'
+import { normalizeSettings as normalizeUploadFilters } from '../plugins/uploader-thetower/config.mjs'
 
 /**
  * Users asked for control over what uploads. Each filter must actually remove

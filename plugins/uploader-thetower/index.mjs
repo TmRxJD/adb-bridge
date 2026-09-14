@@ -6,7 +6,13 @@ import {
   writeAccountLink,
 } from './account-link.mjs'
 import { exchangeLinkToken, revokeBridgeSession } from './session-exchange.mjs'
-import { isAutoUploadEnabled, setAutoUploadEnabled } from './config.mjs'
+import {
+  SETTINGS_SCHEMA,
+  isAutoUploadEnabled,
+  readSettings,
+  setAutoUploadEnabled,
+  writeSettings,
+} from './config.mjs'
 import { acquireSaveBytes, uploadRunsFromSaveBytes } from './run-upload.mjs'
 
 /**
@@ -48,6 +54,13 @@ const uploader = {
   },
 
   describeLink: () => describeAccountLink(),
+
+  /** What uploads and how runs are filtered; drawn by the tray's settings window. */
+  settingsSchema: SETTINGS_SCHEMA,
+  getSettings: () => readSettings(),
+  async setSettings(patch) {
+    return writeSettings(patch)
+  },
 
   /**
    * Exchange the website's one-time link token for this bridge's own session.
@@ -93,14 +106,13 @@ const uploader = {
    */
   async upload(bytes, options = {}) {
     const log = options.log ?? (() => {})
-    // The bridge owns which domains may upload and passes them in. A bridge too
-    // old to send them gets runs only, which is what it always did.
-    const domainsEnabled = Array.isArray(options.domains) ? options.domains : ['runs']
+    const settings = readSettings()
+    const domainsEnabled = settings.domains
 
     let runs = { uploaded: 0, skipped: 0, total: 0 }
     if (domainsEnabled.includes('runs')) {
       try {
-        runs = await uploadRunsFromSaveBytes(bytes, { log, filters: options.filters })
+        runs = await uploadRunsFromSaveBytes(bytes, { log, filters: settings })
       } catch (error) {
         log(`Run upload failed: ${error?.message || error}`)
       }

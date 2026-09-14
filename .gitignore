@@ -9,3 +9,6 @@ Thumbs.db
 installer/**/out/
 installer/windows/*.exe
 games.generated.iss
+
+# Tray app build output (electron-forge)
+tray/out/
