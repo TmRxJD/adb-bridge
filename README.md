@@ -38,6 +38,23 @@ npx adb-bridge
 Or download an installer from
 [Releases](https://github.com/TmRxJD/adb-bridge/releases).
 
+### The tray
+
+The **ADB Bridge** tray app runs the bridge in the background and starts with
+Windows if you tick **Start with Windows**. Right-click the icon for:
+
+- a status line per enabled game (signed-in account, last save read, last
+  upload) — click it to open that game's site;
+- per game: **Automatic uploads**, **Upload now**, and **Settings…**, which
+  opens the settings the game's uploader plugin declares (for The Tower: which
+  data to upload, and rules for which runs to skip — see
+  [its README](plugins/uploader-thetower/README.md#settings));
+- **Scan every** (how often the save is checked; an unchanged save is never
+  pulled or uploaded again), **Show console**, **Help**, **Quit**.
+
+If a bridge is already running, the tray controls it instead of starting a
+second one. The same game settings are available on each game's website.
+
 ### Code signing
 
 The Windows installer and executables are code signed. The free code signing
