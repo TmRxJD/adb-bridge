@@ -29,6 +29,7 @@ export function recordUpload(gameId, result) {
   current.lastUpload = {
     uploaded: Number(result?.uploaded ?? 0),
     skipped: Number(result?.skipped ?? 0),
+    replaced: Number(result?.replaced ?? 0),
     total: Number(result?.total ?? 0),
     filtered: Object.values(result?.filtered ?? {}).reduce((sum, n) => sum + Number(n || 0), 0),
     domainsWritten: Array.isArray(result?.domains?.written) ? result.domains.written.length : 0,

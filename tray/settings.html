@@ -5,15 +5,19 @@
     <title>Settings</title>
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'" />
     <style>
-      :root { color-scheme: light dark; --gap: 12px; }
+      :root { color-scheme: light dark; --gap: 12px; --line: color-mix(in srgb, currentColor 18%, transparent); }
       body { margin: 0; padding: 16px 18px; font: 13px/1.4 system-ui, 'Segoe UI', sans-serif; }
       h1 { font-size: 15px; margin: 0 0 var(--gap); }
-      fieldset { border: 1px solid color-mix(in srgb, currentColor 20%, transparent); border-radius: 6px; margin: 0 0 var(--gap); padding: 8px 10px 10px; }
-      legend { padding: 0 4px; font-weight: 600; }
-      label.row { display: flex; align-items: center; justify-content: space-between; gap: var(--gap); margin: 0 0 var(--gap); }
-      label.check { display: flex; align-items: center; gap: 6px; margin: 4px 0; }
-      input[type='number'], select { width: 120px; padding: 3px 6px; }
-      #status { min-height: 1.4em; font-size: 12px; opacity: 0.8; }
+      section { border-top: 1px solid var(--line); padding: 10px 0 4px; }
+      h2 { font-size: 13px; font-weight: 600; margin: 0 0 6px; }
+      .options { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 2px 12px; }
+      label.check { display: flex; align-items: center; gap: 6px; margin: 3px 0; }
+      .rule { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 5px 0; }
+      .rule.off .rule-text { opacity: 0.55; }
+      .rule input[type='number'] { width: 72px; padding: 2px 5px; }
+      label.row { display: flex; align-items: center; justify-content: space-between; gap: var(--gap); margin: 4px 0; }
+      label.row input[type='number'], label.row select { width: 120px; padding: 3px 6px; }
+      #status { min-height: 1.4em; font-size: 12px; opacity: 0.8; margin-top: 8px; }
       #status.error { color: #d9534f; opacity: 1; }
     </style>
   </head>
@@ -23,11 +27,10 @@
     <div id="status"></div>
     <script>
       // Draws whatever the game's plugin declares. Nothing here knows any game:
-      // the field list, labels and ranges all come from the bridge.
+      // the field list, headings, rule wording and ranges all come from the bridge.
       const gameId = new URLSearchParams(location.search).get('game')
       const form = document.getElementById('form')
       const status = document.getElementById('status')
-      let values = {}
       let saveTimer = null
 
       function report(text, isError = false) {
@@ -35,27 +38,39 @@
         status.className = isError ? 'error' : ''
       }
 
-      function readField(field) {
-        if (field.type === 'boolean') return form.querySelector(`[name="${field.key}"]`).checked
-        if (field.type === 'multiselect') {
-          return [...form.querySelectorAll(`[name="${field.key}"]:checked`)].map(input => input.value)
+      const byName = name => form.querySelector(`[name="${name}"]`)
+
+      function readNumber(name, optional) {
+        const raw = byName(name).value.trim()
+        return raw === '' ? (optional ? null : undefined) : Number(raw)
+      }
+
+      /** Every value the form holds, keyed as the plugin declared them. */
+      function readValues(schema) {
+        const next = {}
+        for (const field of schema) {
+          if (field.type === 'section') continue
+          if (field.type === 'boolean') next[field.key] = byName(field.key).checked
+          else if (field.type === 'multiselect') {
+            next[field.key] = [...form.querySelectorAll(`[name="${field.key}"]:checked`)].map(input => input.value)
+          } else if (field.type === 'number') {
+            const value = readNumber(field.key, field.optional)
+            if (value !== undefined) next[field.key] = value
+          } else if (field.type === 'rule') {
+            next[field.key] = byName(field.key).checked
+            // An emptied input is sent as null: for a range, "no lower bound".
+            for (const input of field.inputs) next[input.key] = readNumber(input.key, true)
+          } else next[field.key] = byName(field.key).value
         }
-        if (field.type === 'number') {
-          const raw = form.querySelector(`[name="${field.key}"]`).value.trim()
-          return raw === '' ? (field.optional ? null : 0) : Number(raw)
-        }
-        return form.querySelector(`[name="${field.key}"]`).value
+        return next
       }
 
       function scheduleSave(schema) {
         clearTimeout(saveTimer)
         report('Saving…')
         saveTimer = setTimeout(async () => {
-          const next = {}
-          for (const field of schema) next[field.key] = readField(field)
           try {
-            const reply = await window.bridgeTray.saveSettings(gameId, next)
-            values = reply.values
+            const reply = await window.bridgeTray.saveSettings(gameId, readValues(schema))
             draw(reply.schema, reply.values)
             report('Saved')
           } catch (error) {
@@ -64,57 +79,124 @@
         }, 400)
       }
 
+      function numberInput(name, spec, value) {
+        const input = document.createElement('input')
+        input.type = 'number'
+        input.name = name
+        if (spec.min !== undefined) input.min = spec.min
+        if (spec.max !== undefined) input.max = spec.max
+        input.value = value == null ? '' : String(value)
+        return input
+      }
+
+      function drawRule(field, current) {
+        const row = document.createElement('div')
+        row.className = 'rule'
+        const toggle = document.createElement('input')
+        toggle.type = 'checkbox'
+        toggle.name = field.key
+        toggle.id = `rule-${field.key}`
+        toggle.checked = current[field.key] === true
+        row.classList.toggle('off', !toggle.checked)
+        const text = document.createElement('label')
+        text.className = 'rule-text'
+        text.htmlFor = toggle.id
+        text.textContent = field.label
+        row.append(toggle, text)
+        field.inputs.forEach((spec, index) => {
+          if (index > 0 && field.joiner) {
+            const joiner = document.createElement('span')
+            joiner.className = 'rule-text'
+            joiner.textContent = field.joiner
+            row.append(joiner)
+          }
+          const input = numberInput(spec.key, spec, current[spec.key])
+          // Typing a value means the user wants the rule: turn it on with it.
+          input.addEventListener('input', () => {
+            toggle.checked = true
+            row.classList.remove('off')
+          })
+          row.append(input)
+        })
+        if (field.suffix) {
+          const suffix = document.createElement('span')
+          suffix.className = 'rule-text'
+          suffix.textContent = field.suffix
+          row.append(suffix)
+        }
+        return row
+      }
+
+      function drawMultiselect(field, current) {
+        const selected = new Set(Array.isArray(current[field.key]) ? current[field.key] : [])
+        const grid = document.createElement('div')
+        grid.className = 'options'
+        for (const option of field.options) {
+          const label = document.createElement('label')
+          label.className = 'check'
+          const input = document.createElement('input')
+          input.type = 'checkbox'
+          input.name = field.key
+          input.value = option.value
+          input.checked = selected.has(option.value)
+          label.append(input, document.createTextNode(option.label))
+          grid.append(label)
+        }
+        return grid
+      }
+
+      function drawPlain(field, current) {
+        const row = document.createElement('label')
+        row.className = 'row'
+        const text = document.createElement('span')
+        text.textContent = field.label
+        let input
+        if (field.type === 'boolean') {
+          input = document.createElement('input')
+          input.type = 'checkbox'
+          input.checked = current[field.key] === true
+          input.name = field.key
+        } else if (field.type === 'number') {
+          input = numberInput(field.key, field, current[field.key])
+        } else {
+          input = document.createElement('select')
+          input.name = field.key
+          for (const option of field.options) {
+            const element = document.createElement('option')
+            element.value = option.value
+            element.textContent = option.label
+            element.selected = current[field.key] === option.value
+            input.append(element)
+          }
+        }
+        row.append(text, input)
+        return row
+      }
+
+      /** Headings open a section; a multiselect is its own section, titled by its label. */
       function draw(schema, current) {
         form.replaceChildren()
+        let section = null
+        const open = title => {
+          section = document.createElement('section')
+          const heading = document.createElement('h2')
+          heading.textContent = title
+          section.append(heading)
+          form.append(section)
+        }
         for (const field of schema) {
-          if (field.type === 'multiselect') {
-            const set = document.createElement('fieldset')
-            const legend = document.createElement('legend')
-            legend.textContent = field.label
-            set.append(legend)
-            const selected = new Set(Array.isArray(current[field.key]) ? current[field.key] : [])
-            for (const option of field.options) {
-              const label = document.createElement('label')
-              label.className = 'check'
-              const input = document.createElement('input')
-              input.type = 'checkbox'
-              input.name = field.key
-              input.value = option.value
-              input.checked = selected.has(option.value)
-              label.append(input, document.createTextNode(option.label))
-              set.append(label)
-            }
-            form.append(set)
+          if (field.type === 'section') {
+            open(field.label)
             continue
           }
-          const row = document.createElement('label')
-          row.className = 'row'
-          const text = document.createElement('span')
-          text.textContent = field.label
-          let input
-          if (field.type === 'boolean') {
-            input = document.createElement('input')
-            input.type = 'checkbox'
-            input.checked = current[field.key] === true
-          } else if (field.type === 'number') {
-            input = document.createElement('input')
-            input.type = 'number'
-            if (field.min !== undefined) input.min = field.min
-            if (field.max !== undefined) input.max = field.max
-            input.value = current[field.key] == null ? '' : String(current[field.key])
-          } else {
-            input = document.createElement('select')
-            for (const option of field.options) {
-              const element = document.createElement('option')
-              element.value = option.value
-              element.textContent = option.label
-              element.selected = current[field.key] === option.value
-              input.append(element)
-            }
+          if (field.type === 'multiselect') {
+            open(field.label)
+            section.append(drawMultiselect(field, current))
+            section = null
+            continue
           }
-          input.name = field.key
-          row.append(text, input)
-          form.append(row)
+          if (!section) open('')
+          section.append(field.type === 'rule' ? drawRule(field, current) : drawPlain(field, current))
         }
       }
 
@@ -122,10 +204,13 @@
         try {
           const reply = await window.bridgeTray.loadSettings(gameId)
           document.title = `${reply.gameName} — Settings`
-          document.getElementById('title').textContent = reply.gameName
-          values = reply.values
+          document.getElementById('title').textContent = `${reply.gameName} uploads`
           draw(reply.schema, reply.values)
-          form.addEventListener('change', () => scheduleSave(reply.schema))
+          form.addEventListener('change', event => {
+            const rule = event.target.closest('.rule')
+            if (rule && event.target.type === 'checkbox') rule.classList.toggle('off', !event.target.checked)
+            scheduleSave(reply.schema)
+          })
           report('')
         } catch (error) {
           report(String(error?.message || error), true)

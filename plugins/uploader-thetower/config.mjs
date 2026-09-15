@@ -20,10 +20,10 @@ function configPath() {
 
 /** Every kind of data this plugin can upload, in import-page tab order. */
 export const UPLOAD_DOMAINS = Object.freeze([
-  { value: 'runs', label: 'Battle Reports' },
+  { value: 'runs', label: 'Battle reports' },
   { value: 'workshop', label: 'Workshop' },
   { value: 'labs', label: 'Labs' },
-  { value: 'uw', label: 'Ultimate Weapons' },
+  { value: 'uw', label: 'Ultimate weapons' },
   { value: 'modules', label: 'Modules' },
   { value: 'cards', label: 'Cards' },
   { value: 'vault', label: 'Vault' },
@@ -33,30 +33,55 @@ export const UPLOAD_DOMAINS = Object.freeze([
   { value: 'lifetime', label: 'Lifetime' },
 ].map(Object.freeze))
 
-export const RUN_TYPES = Object.freeze([
-  { value: 'farming', label: 'Farming runs' },
-  { value: 'tournament', label: 'Tournament runs' },
-].map(Object.freeze))
-
 const DOMAIN_IDS = UPLOAD_DOMAINS.map(domain => domain.value)
-const RUN_TYPE_IDS = RUN_TYPES.map(type => type.value)
 
 /**
- * Declared to the bridge, which relays it to the tray's settings window. Labels
- * only: the window draws exactly these, with no knowledge of the game.
+ * Declared to the bridge, which relays it to the tray's settings window and the
+ * site's bridge dialog; both draw exactly this. Rules read as sentences under
+ * their heading ("Skip farming runs that" / "ended before wave 100").
+ *
+ * Farming and tournament runs have separate rules: tournament difficulty is a
+ * league, not a plain tier, and only a tournament's highest wave counts.
  */
 export const SETTINGS_SCHEMA = Object.freeze([
   { key: 'domains', type: 'multiselect', label: 'Upload these', options: UPLOAD_DOMAINS },
-  { key: 'runTypes', type: 'multiselect', label: 'Run types', options: RUN_TYPES },
-  { key: 'minWave', type: 'number', label: 'Minimum wave', min: 0 },
-  { key: 'farmingTierMin', type: 'number', label: 'Lowest farming tier', min: 1, max: 99, optional: true },
-  { key: 'farmingTierMax', type: 'number', label: 'Highest farming tier', min: 1, max: 99, optional: true },
-  { key: 'coinsBelowMedianPct', type: 'number', label: 'Coins % below median', min: 1, max: 100, optional: true },
-  { key: 'coinsAboveMedianPct', type: 'number', label: 'Coins % above median', min: 1, max: 10_000, optional: true },
+  { key: 'farmingSection', type: 'section', label: 'Skip farming runs that' },
+  { key: 'farmingMinWaveOn', type: 'rule', label: 'ended before wave', inputs: [{ key: 'farmingMinWave', min: 1 }] },
+  {
+    key: 'farmingTierOn',
+    type: 'rule',
+    label: 'were played outside tier',
+    inputs: [{ key: 'farmingTierMin', min: 1, max: 99 }, { key: 'farmingTierMax', min: 1, max: 99 }],
+    joiner: 'to',
+  },
+  {
+    key: 'coinsOutlierOn',
+    type: 'rule',
+    label: 'earned coins more than',
+    inputs: [{ key: 'coinsOutlierPct', min: 1, max: 1000 }],
+    suffix: '% from your median for that tier',
+  },
+  { key: 'tournamentSection', type: 'section', label: 'Tournament runs' },
+  { key: 'tournamentKeepBest', type: 'rule', label: 'Keep only the highest wave of each tournament' },
+  { key: 'tournamentMinWaveOn', type: 'rule', label: 'Skip runs that ended before wave', inputs: [{ key: 'tournamentMinWave', min: 1 }] },
 ].map(Object.freeze))
 
 const DEFAULTS = Object.freeze({
   autoUpload: false,
+})
+
+/** Rule values. Every rule is off by default: a fresh install uploads everything. */
+const DEFAULT_RULES = Object.freeze({
+  farmingMinWaveOn: false,
+  farmingMinWave: 100,
+  farmingTierOn: false,
+  farmingTierMin: null,
+  farmingTierMax: null,
+  coinsOutlierOn: false,
+  coinsOutlierPct: 50,
+  tournamentKeepBest: false,
+  tournamentMinWaveOn: false,
+  tournamentMinWave: 100,
 })
 
 export function readConfig() {
@@ -101,23 +126,54 @@ function pickKnown(value, known) {
 }
 
 /**
- * Sanitise settings. Anything unreadable falls back to "no filter" and "upload
- * everything", never to "filter everything" -- a bad value must not silently
- * stop uploads.
+ * Filters saved before the rules existed (plugin 0.3.x): a flat `minWave`, a
+ * tier range, and separate below/above coin percentages, all applying to every
+ * run. Map them onto the farming rules so nothing a user set is lost. The old
+ * run-type choice has no successor and is dropped.
+ */
+function upgradeLegacyFilters(source) {
+  if ('farmingMinWaveOn' in source || 'coinsOutlierOn' in source || 'farmingTierOn' in source) return source
+  const upgraded = { ...source }
+  const legacyMinWave = resolveOptionalInt(source.minWave, 0, 1_000_000)
+  if (legacyMinWave) {
+    upgraded.farmingMinWaveOn = true
+    upgraded.farmingMinWave = legacyMinWave
+  }
+  if (source.farmingTierMin != null || source.farmingTierMax != null) upgraded.farmingTierOn = true
+  const legacyCoins = resolveOptionalInt(source.coinsBelowMedianPct ?? source.coinsAboveMedianPct, 1, 1000)
+  if (legacyCoins) {
+    upgraded.coinsOutlierOn = true
+    upgraded.coinsOutlierPct = legacyCoins
+  }
+  return upgraded
+}
+
+/**
+ * Sanitise settings. Anything unreadable falls back to the default -- rules
+ * off, everything uploaded -- never to "skip everything".
  */
 export function normalizeSettings(raw) {
-  const source = raw && typeof raw === 'object' ? raw : {}
-  let tierMin = resolveOptionalInt(source.farmingTierMin, 1, 99)
-  let tierMax = resolveOptionalInt(source.farmingTierMax, 1, 99)
-  if (tierMin !== null && tierMax !== null && tierMin > tierMax) [tierMin, tierMax] = [tierMax, tierMin]
+  const source = upgradeLegacyFilters(raw && typeof raw === 'object' ? raw : {})
+  const on = key => (typeof source[key] === 'boolean' ? source[key] : DEFAULT_RULES[key])
+  const wave = key => resolveOptionalInt(source[key], 1, 1_000_000) ?? DEFAULT_RULES[key]
+  const tier = key => resolveOptionalInt(source[key], 1, 99)
+  let farmingTierMin = tier('farmingTierMin')
+  let farmingTierMax = tier('farmingTierMax')
+  if (farmingTierMin !== null && farmingTierMax !== null && farmingTierMin > farmingTierMax) {
+    [farmingTierMin, farmingTierMax] = [farmingTierMax, farmingTierMin]
+  }
   return {
     domains: pickKnown(source.domains, DOMAIN_IDS),
-    runTypes: pickKnown(source.runTypes, RUN_TYPE_IDS),
-    minWave: resolveOptionalInt(source.minWave, 0, 1_000_000) ?? 0,
-    farmingTierMin: tierMin,
-    farmingTierMax: tierMax,
-    coinsBelowMedianPct: resolveOptionalInt(source.coinsBelowMedianPct, 1, 100),
-    coinsAboveMedianPct: resolveOptionalInt(source.coinsAboveMedianPct, 1, 10_000),
+    farmingMinWaveOn: on('farmingMinWaveOn'),
+    farmingMinWave: wave('farmingMinWave'),
+    farmingTierOn: on('farmingTierOn'),
+    farmingTierMin,
+    farmingTierMax,
+    coinsOutlierOn: on('coinsOutlierOn'),
+    coinsOutlierPct: resolveOptionalInt(source.coinsOutlierPct, 1, 1000) ?? DEFAULT_RULES.coinsOutlierPct,
+    tournamentKeepBest: on('tournamentKeepBest'),
+    tournamentMinWaveOn: on('tournamentMinWaveOn'),
+    tournamentMinWave: wave('tournamentMinWave'),
   }
 }
 

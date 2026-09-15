@@ -37,20 +37,29 @@ function withHome(legacyConfig, run) {
 
 const ALL = UPLOAD_DOMAINS.map(domain => domain.value)
 
-test('a fresh install uploads every domain with no filters', () =>
+test('a fresh install uploads every domain with every rule off', () =>
   withHome(null, () => {
     const settings = readSettings()
     assert.deepEqual(settings.domains, ALL)
-    assert.deepEqual(settings.runTypes, ['farming', 'tournament'])
-    assert.equal(settings.minWave, 0)
+    assert.equal(settings.farmingMinWaveOn, false)
+    assert.equal(settings.tournamentKeepBest, false)
   }))
 
 test('choices persist, and are what the next read returns', () =>
   withHome(null, () => {
-    writeSettings({ domains: ['runs', 'labs'], minWave: 100 })
+    writeSettings({ domains: ['runs', 'labs'], farmingMinWaveOn: true, farmingMinWave: 150, tournamentKeepBest: true })
     const settings = readSettings()
     assert.deepEqual(settings.domains, ['runs', 'labs'])
-    assert.equal(settings.minWave, 100)
+    assert.equal(settings.farmingMinWaveOn, true)
+    assert.equal(settings.farmingMinWave, 150)
+    assert.equal(settings.tournamentKeepBest, true)
+  }))
+
+test('turning a rule off keeps its value for when it comes back on', () =>
+  withHome(null, () => {
+    writeSettings({ farmingMinWaveOn: true, farmingMinWave: 321 })
+    writeSettings({ farmingMinWaveOn: false })
+    assert.equal(readSettings().farmingMinWave, 321)
   }))
 
 test('choices made in the bridge core before the move are kept', () =>
@@ -58,8 +67,8 @@ test('choices made in the bridge core before the move are kept', () =>
     const settings = readSettings()
     assert.ok(!settings.domains.includes('vault') && !settings.domains.includes('bots'))
     assert.ok(settings.domains.includes('relics'), 'a domain nobody turned off stays on')
-    assert.equal(settings.minWave, 250)
-    assert.deepEqual(settings.runTypes, ['farming'])
+    assert.equal(settings.farmingMinWaveOn, true)
+    assert.equal(settings.farmingMinWave, 250)
   }))
 
 test('the oldest core format (an enabled list) keeps newer domains on', () =>
@@ -74,6 +83,28 @@ test('the declared schema survives validation intact', () => {
   const fields = normalizeSettingsSchema(SETTINGS_SCHEMA, message => dropped.push(message))
   assert.deepEqual(dropped, [])
   assert.equal(fields.length, SETTINGS_SCHEMA.length)
+})
+
+test('rules and sections survive validation with their inputs', () => {
+  const fields = normalizeSettingsSchema([
+    { key: 'head', type: 'section', label: 'Skip farming runs that' },
+    { key: 'rangeOn', type: 'rule', label: 'outside tier', inputs: [{ key: 'lo', min: 1 }, { key: 'hi', max: 99 }], joiner: 'to' },
+    { key: 'plainOn', type: 'rule', label: 'Keep only the best' },
+  ])
+  assert.deepEqual(fields.map(field => field.key), ['head', 'rangeOn', 'plainOn'])
+  assert.deepEqual(fields[1].inputs.map(input => input.key), ['lo', 'hi'])
+  assert.equal(fields[1].joiner, 'to')
+  assert.deepEqual(fields[2].inputs, [])
+})
+
+test('a rule whose input reuses another key is dropped, not drawn', () => {
+  const dropped = []
+  const fields = normalizeSettingsSchema([
+    { key: 'minWave', type: 'number' },
+    { key: 'ruleOn', type: 'rule', label: 'clash', inputs: [{ key: 'minWave' }] },
+  ], message => dropped.push(message))
+  assert.deepEqual(fields.map(field => field.key), ['minWave'])
+  assert.equal(dropped.length, 1)
 })
 
 test('a malformed schema field is dropped and reported, not drawn', () => {

@@ -7,11 +7,12 @@ import {
   buildTrackerRunDocumentPermissions,
   findBattleHistoryItems,
   looksLikeBattleRun,
+  softDeleteTrackerRunCloudDocuments,
   writeTrackerRunCloudDocumentPair,
   TRACKER_RUN_COLLECTION_IDS,
 } from '@tmrxjd/platform/tools'
 import { readAccountLink } from './account-link.mjs'
-import { filterBattleRuns } from './run-filters.mjs'
+import { filterBattleRuns, planTournamentKeepBest } from './run-filters.mjs'
 import { discoverNativeHostSave, pullSave } from 'adb-bridge'
 import { towerProfile } from './profile.mjs'
 
@@ -101,24 +102,29 @@ async function assertSessionValid(client) {
   }
 }
 
-/** Dedup keys for runs this user already has in the cloud. */
-async function fetchExistingDedupKeys(databases, userId) {
+/**
+ * The account's recent runs, and their dedup keys. Soft-deleted runs keep their
+ * key, so a run the user deleted is not uploaded again.
+ */
+async function fetchRecentRuns(databases, userId) {
   const keys = new Set()
+  let docs
   try {
     const res = await databases.listDocuments(RUNS_DATABASE_ID, TRACKER_RUN_COLLECTION_IDS.main, [
       Query.equal('userId', userId),
       Query.limit(100),
       Query.orderDesc('$createdAt'),
     ])
-    for (const doc of res?.documents ?? []) {
-      const key = buildBattleRunDedupKeyFromStoredRun(doc)
-      if (key) keys.add(key)
-    }
+    docs = res?.documents ?? []
   } catch (error) {
     // A failed dedup read must not cause duplicate writes, so surface it.
     throw new Error(`Could not read existing runs for de-duplication: ${error?.message || error}`)
   }
-  return keys
+  for (const doc of docs) {
+    const key = buildBattleRunDedupKeyFromStoredRun(doc)
+    if (key) keys.add(key)
+  }
+  return { keys, docs }
 }
 
 /**
@@ -131,15 +137,16 @@ export async function uploadRunsFromSaveBytes(bytes, options = {}) {
   if (!link.userId) throw new Error('Linked account is missing a user id; re-link from the import page.')
 
   const log = options.log ?? (() => {})
+  const settings = options.filters ?? {}
   const entries = extractBattleRunsFromSave(bytes)
-  const noneFiltered = { type: 0, wave: 0, tier: 0, coins: 0 }
-  if (entries.length === 0) return { uploaded: 0, skipped: 0, total: 0, filtered: noneFiltered, coinsNoBaseline: 0 }
-  const { kept, filtered, coinsNoBaseline } = filterBattleRuns(entries, options.filters)
+  const { kept, filtered: ruleFiltered, coinsNoBaseline } = filterBattleRuns(entries, settings)
+  const filtered = { ...ruleFiltered, tournamentNotBest: 0 }
+  if (entries.length === 0) return { uploaded: 0, skipped: 0, replaced: 0, total: 0, filtered, coinsNoBaseline }
 
   const client = createClient(link)
   await assertSessionValid(client)
   const databases = new Databases(client)
-  const existing = await fetchExistingDedupKeys(databases, link.userId)
+  const { keys: existing, docs: storedDocs } = await fetchRecentRuns(databases, link.userId)
 
   const username = link.username || 'Unknown'
   // Same helper the website uses, so bridge-written documents carry identical
@@ -152,17 +159,30 @@ export async function uploadRunsFromSaveBytes(bytes, options = {}) {
 
   let uploaded = 0
   let skipped = 0
+  let replaced = 0
 
+  const candidates = []
   for (const entry of kept) {
     const dedupKey = buildBattleRunDedupKeyFromBattleEntry(entry)
     if (dedupKey && existing.has(dedupKey)) {
       skipped += 1
       continue
     }
-
+    if (dedupKey) existing.add(dedupKey)
     // No note: an auto-imported run should look exactly like a manual one.
-    const run = buildTrackerRunDataFromBattleHistoryEntry(entry, { notePrefix: '' })
+    candidates.push({ run: buildTrackerRunDataFromBattleHistoryEntry(entry, { notePrefix: '' }) })
+  }
 
+  let toUpload = candidates
+  let toReplace = []
+  if (settings.tournamentKeepBest) {
+    const plan = planTournamentKeepBest(candidates, storedDocs)
+    toUpload = plan.upload
+    toReplace = plan.replace
+    filtered.tournamentNotBest = plan.notBest.length
+  }
+
+  for (const { run } of toUpload) {
     await writeTrackerRunCloudDocumentPair({
       databases,
       databaseId: RUNS_DATABASE_ID,
@@ -173,11 +193,27 @@ export async function uploadRunsFromSaveBytes(bytes, options = {}) {
       permissions,
     })
 
-    if (dedupKey) existing.add(dedupKey)
     uploaded += 1
   }
 
-  const filteredCount = filtered.type + filtered.wave + filtered.tier + filtered.coins
-  log(`Uploaded ${uploaded} new run(s); ${skipped} already present; ${filteredCount} left out by filters.`)
-  return { uploaded, skipped, total: entries.length, filtered, coinsNoBaseline }
+  // Only after the better run is safely written, so a failure never leaves a
+  // tournament with no run at all.
+  for (const doc of toReplace) {
+    await softDeleteTrackerRunCloudDocuments({
+      databases,
+      databaseId: RUNS_DATABASE_ID,
+      mainCollectionId: TRACKER_RUN_COLLECTION_IDS.main,
+      extendedCollectionId: TRACKER_RUN_COLLECTION_IDS.extended,
+      runId: doc.$id,
+    })
+    replaced += 1
+  }
+
+  const filteredCount = sumCounts(filtered)
+  log(`Uploaded ${uploaded} new run(s); ${skipped} already present; ${filteredCount} skipped by your rules; ${replaced} replaced by a better tournament run.`)
+  return { uploaded, skipped, replaced, total: entries.length, filtered, coinsNoBaseline }
+}
+
+export function sumCounts(counts) {
+  return Object.values(counts ?? {}).reduce((sum, n) => sum + Number(n || 0), 0)
 }

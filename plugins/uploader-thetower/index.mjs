@@ -13,7 +13,7 @@ import {
   setAutoUploadEnabled,
   writeSettings,
 } from './config.mjs'
-import { acquireSaveBytes, uploadRunsFromSaveBytes } from './run-upload.mjs'
+import { acquireSaveBytes, sumCounts, uploadRunsFromSaveBytes } from './run-upload.mjs'
 
 /**
  * The Tower's uploader for adb-bridge.
@@ -33,10 +33,12 @@ function summarize(runs, domains) {
   if (runs?.uploaded > 0) {
     messages.push(`${runs.uploaded} new run(s) sent to your tracker.`)
   }
-  const f = runs?.filtered
-  const filteredCount = f ? f.type + f.wave + f.tier + f.coins : 0
+  const filteredCount = sumCounts(runs?.filtered)
   if (filteredCount > 0) {
-    messages.push(`${filteredCount} run(s) left out by your upload filters.`)
+    messages.push(`${filteredCount} run(s) skipped by your upload rules.`)
+  }
+  if (runs?.replaced > 0) {
+    messages.push(`${runs.replaced} tournament run(s) replaced by a higher wave.`)
   }
   if (domains?.written?.length > 0) {
     messages.push(`updated ${domains.written.join(', ')}.`)
