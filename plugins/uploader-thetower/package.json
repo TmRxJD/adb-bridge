@@ -1,6 +1,6 @@
 {
   "name": "adb-bridge-uploader-thetower",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Background run upload for The Tower, as an adb-bridge uploader plugin.",
   "license": "GPL-3.0-or-later",
   "type": "module",
@@ -22,11 +22,11 @@
   ],
   "engines": { "node": ">=18" },
   "peerDependencies": {
-    "adb-bridge": ">=0.4.0"
+    "adb-bridge": ">=0.5.0"
   },
   "dependencies": {
     "appwrite": "^17.0.2",
-    "@tmrxjd/platform": "^0.1.27"
+    "@tmrxjd/platform": "^0.1.39"
   },
   "repository": {
     "type": "git",
