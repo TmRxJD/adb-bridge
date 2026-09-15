@@ -4,6 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { normalizeAdbExecError, requireAdbExecutable } from '../adb/adb-resolve.mjs'
+import { getLastEmulatorHost, setLastEmulatorHost } from '../bridge-config.mjs'
 import {
   buildEmulatorPullPaths,
   KNOWN_EMULATOR_ADB_HOSTS,
@@ -85,12 +86,21 @@ async function runAdbBinary(serial, args, timeoutMs = 120_000) {
   }
 }
 
-/** @param {string | undefined} customPort */
-export function buildKnownHosts(customPort) {
+/**
+ * Emulator hosts in the order to try them: the user's custom port, then the host the
+ * last successful pull used, then every known emulator default.
+ *
+ * @param {string | undefined} customPort
+ * @param {string | null} [lastHost] "127.0.0.1:PORT" from the bridge config
+ */
+export function buildKnownHosts(customPort, lastHost = null) {
   const hosts = []
   const port = String(customPort ?? '').trim()
   if (/^\d{4,5}$/.test(port)) {
     hosts.push(`127.0.0.1:${port}`)
+  }
+  if (lastHost && /^127\.0\.0\.1:\d{4,5}$/.test(lastHost) && !hosts.includes(lastHost)) {
+    hosts.push(lastHost)
   }
   for (const host of KNOWN_EMULATOR_ADB_HOSTS) {
     if (!hosts.includes(host)) {
@@ -181,10 +191,14 @@ async function connectKnownHostsParallel(hosts) {
 
 /**
  * Legacy detectEmulator(): probe each known host with connect + get-state, then adb devices.
+ * With a remembered host and nothing online, that host is tried alone first; the full
+ * probe of every known port runs only if it does not answer.
+ *
  * @param {string | undefined} customPort
+ * @param {{ lastHost?: string | null }} [options]
  */
-export async function resolveOnlineEmulatorTargets(customPort) {
-  const hostPriority = buildKnownHosts(customPort)
+export async function resolveOnlineEmulatorTargets(customPort, { lastHost = null } = {}) {
+  const hostPriority = buildKnownHosts(customPort, lastHost)
   await ensureAdbServer()
 
   const targets = []
@@ -204,12 +218,24 @@ export async function resolveOnlineEmulatorTargets(customPort) {
   const needsHostProbe = targets.length === 0 || /^\d{4,5}$/.test(customPortTrimmed)
 
   if (needsHostProbe) {
-    const hostsToProbe = /^\d{4,5}$/.test(customPortTrimmed)
-      ? hostPriority.slice(0, 1)
-      : hostPriority
-    await connectKnownHostsParallel(hostsToProbe)
-    for (const serial of await listDeviceSerials()) {
-      add(serial)
+    const customOnly = /^\d{4,5}$/.test(customPortTrimmed)
+    let probedLastHost = false
+    if (!customOnly && lastHost && hostPriority.includes(lastHost)) {
+      probedLastHost = true
+      if (await connectHost(lastHost)) {
+        for (const serial of await listDeviceSerials()) {
+          add(serial)
+        }
+      }
+    }
+    if (targets.length === 0) {
+      const hostsToProbe = customOnly
+        ? hostPriority.slice(0, 1)
+        : hostPriority.filter(host => !(probedLastHost && host === lastHost))
+      await connectKnownHostsParallel(hostsToProbe)
+      for (const serial of await listDeviceSerials()) {
+        add(serial)
+      }
     }
   }
 
@@ -801,7 +827,9 @@ export async function pullSave(profile, options = {}) {
     await waitForUsbStackSettle('before', msg => consoleUi?.log(msg))
   }
 
-  let candidates = await resolveOnlineEmulatorTargets(options.customPort)
+  let candidates = await resolveOnlineEmulatorTargets(options.customPort, {
+    lastHost: preferPhysical ? null : getLastEmulatorHost(),
+  })
   if (preferPhysical) {
     candidates = candidates.filter(serial => !isEmulatorAdbSerial(serial))
   }
@@ -832,6 +860,8 @@ export async function pullSave(profile, options = {}) {
     }
     const result = await tryPullOnSerialWithRetries(serial, profile, options)
     if (result) {
+      // Remember the emulator address that worked, so the next connect tries it first.
+      if (!preferPhysical) setLastEmulatorHost(result.deviceSerial)
       const deviceLabel = await resolveDeviceDisplayName(result.deviceSerial)
       if (preferPhysical) {
         consoleUi?.log('Letting USB connection settle safely…', 0.9)
