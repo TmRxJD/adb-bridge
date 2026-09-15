@@ -3,7 +3,7 @@ import { decodePlayerInfoSaveBytes } from '@tmrxjd/platform/node'
 import {
   buildBattleRunDedupKeyFromBattleEntry,
   buildBattleRunDedupKeyFromStoredRun,
-  buildTrackerRunDataFromBattleHistoryEntry,
+  buildStitchedTrackerRunFromBattleHistorySaveEntry,
   buildTrackerRunDocumentPermissions,
   findBattleHistoryItems,
   looksLikeBattleRun,
@@ -21,7 +21,7 @@ import { towerProfile } from './profile.mjs'
  * while the tracker website is closed.
  *
  * This deliberately calls the SAME canonical helpers the website uses
- * (`buildTrackerRunDataFromBattleHistoryEntry` + `writeTrackerRunCloudDocumentPair`),
+ * (`buildStitchedTrackerRunFromBattleHistorySaveEntry` + `writeTrackerRunCloudDocumentPair`),
  * rather than reimplementing the mapping or the main/extended pair write. See
  * docs/TRACKER_RUN_SYNC_CONTRACT.md — runs must always be written as a pair.
  */
@@ -170,7 +170,7 @@ export async function uploadRunsFromSaveBytes(bytes, options = {}) {
     }
     if (dedupKey) existing.add(dedupKey)
     // No note: an auto-imported run should look exactly like a manual one.
-    candidates.push({ run: buildTrackerRunDataFromBattleHistoryEntry(entry, { notePrefix: '' }) })
+    candidates.push({ run: buildStitchedTrackerRunFromBattleHistorySaveEntry(entry, { notePrefix: '' }) })
   }
 
   let toUpload = candidates

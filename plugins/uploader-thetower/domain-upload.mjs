@@ -1,26 +1,26 @@
 import { Client, Databases, Permission, Role } from 'appwrite'
 import { decodePlayerInfoSaveBytes } from '@tmrxjd/platform/node'
 import {
-  buildBotsTrackerImportPayload,
-  buildLabsTrackerImportPayload,
+  buildBotsImportPayload,
+  buildLabsImportPayload,
   applyUwProgressLevelsToTrackerProgress,
-  buildLifetimeTrackerImportPayload,
-  buildRelicsTrackerImportPayloadFromSaveRoot,
-  buildModulesTrackerImportPayload,
-  buildUltimateWeaponsTrackerImportPayload,
-  buildCardsTrackerImportPayload,
-  buildGuardiansTrackerImportPayload,
-  buildVaultTrackerImportPayload,
-  extractBotsFromSaveRoot,
-  extractLabsFromSaveRoot,
-  extractModulesFromSaveRoot,
-  extractLifetimeFromSaveRoot,
-  extractUltimateWeaponsFromSaveRoot,
-  extractCardsFromSaveRoot,
-  extractGuardiansFromSaveRoot,
-  extractVaultFromSaveRoot,
-  extractWorkshopFromSaveRoot,
-  resolvePresetSnapshot,
+  buildLifetimeImportPayload,
+  buildRelicsImportPayloadFromSaveRoot,
+  buildModulesImportPayload,
+  buildUltimateWeaponsImportPayload,
+  buildCardsImportPayload,
+  buildGuardiansImportPayload,
+  buildVaultImportPayload,
+  readBotsFromSaveRoot,
+  readLabsFromSaveRoot,
+  readModulesFromSaveRoot,
+  readLifetimeFromSaveRoot,
+  readUltimateWeaponsFromSaveRoot,
+  readCardsFromSaveRoot,
+  readGuardiansFromSaveRoot,
+  readVaultFromSaveRoot,
+  readWorkshopFromSaveRoot,
+  getPresetSnapshot,
 } from '@tmrxjd/platform/tools'
 import { readAccountLink } from './account-link.mjs'
 
@@ -55,7 +55,7 @@ const DOMAIN_WRITERS = {
     collectionId: 'tracker_labs',
     saveDerivedKeys: ['records'],
     derive(saveRoot, currentProgress) {
-      const payload = buildLabsTrackerImportPayload(extractLabsFromSaveRoot(saveRoot))
+      const payload = buildLabsImportPayload(readLabsFromSaveRoot(saveRoot))
       const levels = payload?.currentLabLevels
       if (!levels) return null
       const records = currentProgress?.records
@@ -74,7 +74,7 @@ const DOMAIN_WRITERS = {
     collectionId: 'tracker_modules',
     saveDerivedKeys: ['modules'],
     derive(saveRoot, currentProgress) {
-      const payload = buildModulesTrackerImportPayload(extractModulesFromSaveRoot(saveRoot))
+      const payload = buildModulesImportPayload(readModulesFromSaveRoot(saveRoot))
       const inventory = payload?.inventory
       if (!Array.isArray(inventory)) return null
 
@@ -111,8 +111,8 @@ const DOMAIN_WRITERS = {
     collectionId: 'tracker_uw',
     saveDerivedKeys: ['ultimateWeaponsProgress'],
     derive(saveRoot, currentProgress) {
-      const payload = buildUltimateWeaponsTrackerImportPayload(
-        extractUltimateWeaponsFromSaveRoot(saveRoot),
+      const payload = buildUltimateWeaponsImportPayload(
+        readUltimateWeaponsFromSaveRoot(saveRoot),
       )
       const levels = payload?.statStarts
       const progress = currentProgress?.ultimateWeaponsProgress
@@ -131,7 +131,7 @@ const DOMAIN_WRITERS = {
     collectionId: 'tracker_relics',
     saveDerivedKeys: ['collectedRelics', 'collectedThemes'],
     derive(saveRoot) {
-      const payload = buildRelicsTrackerImportPayloadFromSaveRoot(saveRoot)
+      const payload = buildRelicsImportPayloadFromSaveRoot(saveRoot)
       if (!payload) return null
       return {
         collectedRelics: payload.collectedRelicIds,
@@ -143,7 +143,7 @@ const DOMAIN_WRITERS = {
     collectionId: 'tracker_lifetime',
     saveDerivedKeys: ['entries'],
     derive(saveRoot, currentProgress) {
-      const snapshot = buildLifetimeTrackerImportPayload(extractLifetimeFromSaveRoot(saveRoot))
+      const snapshot = buildLifetimeImportPayload(readLifetimeFromSaveRoot(saveRoot))
       if (!snapshot?.date) return null
       // Entries are dated snapshots. Replace the one for today rather than
       // appending, otherwise a one-minute poll would add an entry per pass.
@@ -159,7 +159,7 @@ const DOMAIN_WRITERS = {
     collectionId: 'tracker_cards',
     saveDerivedKeys: ['entries'],
     derive(saveRoot) {
-      const payload = buildCardsTrackerImportPayload(extractCardsFromSaveRoot(saveRoot))
+      const payload = buildCardsImportPayload(readCardsFromSaveRoot(saveRoot))
       return payload?.entries ? { entries: payload.entries } : null
     },
   },
@@ -168,7 +168,7 @@ const DOMAIN_WRITERS = {
     // `flips` is user-recorded and has no save equivalent, so it is preserved.
     saveDerivedKeys: ['levels', 'spentKeys'],
     derive(saveRoot) {
-      const payload = buildVaultTrackerImportPayload(extractVaultFromSaveRoot(saveRoot))
+      const payload = buildVaultImportPayload(readVaultFromSaveRoot(saveRoot))
       if (!payload) return null
       return { levels: payload.levels, spentKeys: payload.spentKeys }
     },
@@ -177,7 +177,7 @@ const DOMAIN_WRITERS = {
     collectionId: 'tracker_bots',
     saveDerivedKeys: ['levels', 'plusLevels', 'unlocked', 'plusUnlocked', 'labLevels'],
     derive(saveRoot) {
-      const payload = buildBotsTrackerImportPayload(extractBotsFromSaveRoot(saveRoot))
+      const payload = buildBotsImportPayload(readBotsFromSaveRoot(saveRoot))
       if (!payload) return null
       return {
         levels: payload.levels,
@@ -192,7 +192,7 @@ const DOMAIN_WRITERS = {
     collectionId: 'tracker_guardians',
     saveDerivedKeys: ['levels'],
     derive(saveRoot) {
-      const payload = buildGuardiansTrackerImportPayload(extractGuardiansFromSaveRoot(saveRoot))
+      const payload = buildGuardiansImportPayload(readGuardiansFromSaveRoot(saveRoot))
       return payload?.levels ? { levels: payload.levels } : null
     },
   },
@@ -200,11 +200,11 @@ const DOMAIN_WRITERS = {
     collectionId: 'tracker_workshop',
     saveDerivedKeys: ['levels', 'enhancementLevels'],
     derive(saveRoot, currentProgress) {
-      const extract = extractWorkshopFromSaveRoot(saveRoot)
+      const extract = readWorkshopFromSaveRoot(saveRoot)
       if (!extract) return null
       // Mirror whichever preset the player currently has selected.
       const activeTab = Number(currentProgress?.activeTab ?? 0)
-      const snapshot = resolvePresetSnapshot(extract, activeTab)
+      const snapshot = getPresetSnapshot(extract, activeTab)
       if (!snapshot) return null
       return {
         levels: snapshot.levels,
