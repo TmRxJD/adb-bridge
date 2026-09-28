@@ -27,7 +27,9 @@ anyone distributing a modified build must publish their changes.
   to, unless you explicitly link an account for a game that supports upload.
 - It does not read files belonging to any game you have not enabled.
 - It does not modify anything on your device. Pulls only.
-- It does not require root.
+- It does not require root on ordinary supported devices. If a cloud phone grants
+  root only through `su` (including LDCloud), the bridge can use that read-only
+  route when ADB connectivity is available.
 
 ## Install
 
@@ -37,6 +39,25 @@ npx adb-bridge
 
 Or download an installer from
 [Releases](https://github.com/TmRxJD/adb-bridge/releases).
+
+### LDCloud
+
+LDCloud normally runs beyond the local computer's ADB network, so the recommended
+path is the Tower Run Tracker Android companion app installed inside the cloud
+phone. In **LDCloud Assistant → ROOT Settings**, grant root to the tracker app,
+then use **Import Save → LDCloud → Read current LDCloud save**. The app reads the
+private save with `su` and passes it directly to the same decoder used by file and
+ADB imports; it does not modify the game.
+
+When an LDCloud instance exposes an ADB endpoint, this bridge also supports its
+common configuration: unprivileged `adbd` plus per-app `su`. The bridge tries a
+read-only `su -c cat` after normal app-storage access and before attempting to
+restart `adbd` as root. Enter the exposed ADB port in the tracker import page.
+
+For unattended transfers, the tracker import page can issue a scoped MacroDroid
+or Tasker pairing token. For a no-network workflow, copy `playerInfo.dat` to
+Download with a root file manager, export it through LDCloud Cloud Disk, and pick
+the exported file on the import page.
 
 ### The tray
 
@@ -150,7 +171,7 @@ adb-bridge --boot-only     # register and exit (for installers)
 adb-bridge --remove-boot
 ```
 
-On Windows this creates a Scheduled Task, falling back to a visible script in
+On Windows this creates a Scheduled Task, falling back to a hidden launcher script in
 your Startup folder when the task cannot be created without administrator
 rights. It never writes a `Run` registry key — that is hidden from users and is
 one of the behaviours antivirus heuristics score as malware.

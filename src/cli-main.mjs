@@ -5,6 +5,7 @@ import { loadAllGameProfiles } from './games/registry.mjs'
 import { bridgeIsConfigured, enableGame, readEnabledGameIds } from './bridge-state.mjs'
 import {
   installBootEntry,
+  upgradeVisibleBootEntry,
   isBootEntryInstalled,
   removeBootEntry,
   removeLegacyBootEntries,
@@ -131,7 +132,14 @@ export async function runCliMain(argv = process.argv.slice(2), log = console.log
 
   if (options.boot) {
     await installBootEntry(log)
-  } else if (!options.noBoot) {
+  } else {
+    try {
+      await upgradeVisibleBootEntry(log)
+    } catch {
+      // Autostart cosmetics must never stop the bridge from serving.
+    }
+  }
+  if (!options.boot && !options.noBoot) {
     // Someone upgrading from tracker-bridge or cifi-bridge would otherwise keep
     // starting the old bridge at sign-in alongside this one.
     for (const entry of await removeLegacyBootEntries()) {

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { isLegacyWindowsStartupEntry, buildBootLaunchCommand } from '../src/boot-persistence.mjs'
+import { isLegacyWindowsStartupEntry, buildBootLaunchCommand, buildWindowsHiddenLauncher } from '../src/boot-persistence.mjs'
 
 // THE BUG THIS COVERS, measured on a real machine.
 //
@@ -49,4 +49,18 @@ test('the boot command starts the bridge without re-registering autostart', () =
 // bridge that silently does not start.
 test('the npx fallback can never stop on a prompt', () => {
   assert.match(buildBootLaunchCommand(), /--yes/)
+})
+
+// A Startup-folder .cmd opened a console window at every sign-in that stayed up while the bridge
+// ran. The launcher must hide the window (style 0) and survive quotes in the command.
+test('Windows launcher runs the bridge hidden and escapes quotes', () => {
+  const vbs = buildWindowsHiddenLauncher('"C:\Volta\bin\adb-bridge" --daemon --skip-intro --no-boot')
+  assert.equal(
+    vbs,
+    'CreateObject("WScript.Shell").Run """C:\Volta\bin\adb-bridge"" --daemon --skip-intro --no-boot", 0, False\r\n',
+  )
+})
+
+test('our own .vbs entry is never treated as legacy', () => {
+  assert.equal(isLegacyWindowsStartupEntry('ADB Bridge.vbs'), false)
 })

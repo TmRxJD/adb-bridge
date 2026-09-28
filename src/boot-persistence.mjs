@@ -23,7 +23,11 @@ const execFileAsync = promisify(execFile)
 const WINDOWS_TASK_NAME = 'AdbBridge'
 const MAC_LABEL = 'io.github.tmrxjd.adb-bridge'
 const LINUX_ENTRY = 'adb-bridge.desktop'
-const WINDOWS_STARTUP_FILE = 'ADB Bridge.cmd'
+// A .vbs, not a .cmd: Windows runs a Startup-folder .cmd in a visible console window that sits on
+// screen for as long as the bridge runs. wscript runs the .vbs with no window at all.
+const WINDOWS_STARTUP_FILE = 'ADB Bridge.vbs'
+// What releases up to 0.5.1 wrote. Replaced by the .vbs on upgrade, see upgradeVisibleBootEntry.
+const WINDOWS_VISIBLE_STARTUP_FILE = 'ADB Bridge.cmd'
 
 /**
  * The per-game bridges this replaces. Their entries are removed when ours is
@@ -100,6 +104,24 @@ function listWindowsStartupEntries() {
   }
 }
 
+/** Where the hidden launcher lives when a Scheduled Task runs it. */
+function windowsHiddenLauncherPath() {
+  return path.join(os.homedir(), '.adb-bridge', 'adb-bridge-hidden.vbs')
+}
+
+/**
+ * A VBScript that starts `command` with no window (Run style 0) and does not wait for it.
+ * VBScript string literals escape a quote by doubling it.
+ *
+ * @param {string} command
+ * @returns {string}
+ */
+export function buildWindowsHiddenLauncher(command) {
+  const eol = String.fromCharCode(13, 10)
+  const literal = `"${String(command).replace(/"/g, '""')}"`
+  return `CreateObject("WScript.Shell").Run ${literal}, 0, False${eol}`
+}
+
 async function runSchtasks(args, timeoutMs = 15_000) {
   return await execFileAsync('schtasks', args, { timeout: timeoutMs, windowsHide: true })
 }
@@ -155,6 +177,7 @@ export async function isBootEntryInstalled() {
     // Either mechanism counts: a Scheduled Task when elevation allowed one,
     // otherwise the Startup-folder script.
     if (fs.existsSync(windowsStartupEntryPath())) return true
+    if (fs.existsSync(windowsStartupEntryPath(WINDOWS_VISIBLE_STARTUP_FILE))) return true
     return readWindowsTask(WINDOWS_TASK_NAME)
   }
   if (process.platform === 'darwin') return fs.existsSync(macLaunchAgentPath())
@@ -170,6 +193,31 @@ export async function isBootEntryInstalled() {
  *
  * @returns {Promise<string[]>} Human-readable descriptions of what was removed.
  */
+/**
+ * Replace an autostart entry that opens a console window with the hidden one.
+ *
+ * Runs on every start, including the --no-boot daemon the entry itself launches, because that is
+ * the only code an existing install ever runs: nobody re-registers autostart after an update, so
+ * without this the visible window would outlive the release that fixed it.
+ *
+ * @returns {Promise<boolean>} true when the entry was replaced.
+ */
+export async function upgradeVisibleBootEntry(log = console.log) {
+  if (process.platform !== 'win32') return false
+  let visible = fs.existsSync(windowsStartupEntryPath(WINDOWS_VISIBLE_STARTUP_FILE))
+  if (!visible) {
+    try {
+      const { stdout } = await runSchtasks(['/Query', '/TN', WINDOWS_TASK_NAME, '/V', '/FO', 'LIST'])
+      visible = /cmd\.exe/i.test(String(stdout || ''))
+    } catch {
+      // No task registered.
+    }
+  }
+  if (!visible) return false
+  await installBootEntry(log)
+  return true
+}
+
 export async function removeLegacyBootEntries() {
   const removed = []
 
@@ -241,9 +289,18 @@ export async function installBootEntry(log = console.log) {
 
   if (process.platform === 'win32') {
     const resolvedCommand = await resolveWindowsLaunchCommand()
-    // Wrapped through cmd.exe so the .cmd shim runs via a shell, using the
-    // absolute path when one was found so boot-time PATH is never a factor.
-    const fullCommand = `cmd.exe /c "${resolvedCommand.replace(/"/g, '\\"')}"`
+    // Every entry goes through a hidden VBScript launcher. Running the .cmd shim directly (or via
+    // cmd.exe /c) opens a console window at sign-in that stays up while the bridge runs.
+    const launcher = buildWindowsHiddenLauncher(resolvedCommand)
+    const launcherPath = windowsHiddenLauncherPath()
+    fs.mkdirSync(path.dirname(launcherPath), { recursive: true })
+    fs.writeFileSync(launcherPath, launcher, 'utf8')
+    const fullCommand = `wscript.exe //B //Nologo "${launcherPath}"`
+    try {
+      fs.rmSync(windowsStartupEntryPath(WINDOWS_VISIBLE_STARTUP_FILE), { force: true })
+    } catch {
+      // Locked; the upgrade check retries on the next start.
+    }
 
     // Prefer a Scheduled Task: it starts the command with no console window and
     // the entry is visible and removable in the Task Scheduler UI. /F replaces
@@ -255,6 +312,11 @@ export async function installBootEntry(log = console.log) {
     // plain file the user can see and delete.
     try {
       await runSchtasks(['/Create', '/TN', WINDOWS_TASK_NAME, '/TR', fullCommand, '/SC', 'ONLOGON', '/F'])
+      try {
+        fs.rmSync(windowsStartupEntryPath(), { force: true })
+      } catch {
+        // Harmless: the task and the script would both start one bridge, and the second exits.
+      }
       log('Registered adb-bridge to start when you sign in to Windows (Scheduled Task).')
       return
     } catch {
@@ -263,12 +325,7 @@ export async function installBootEntry(log = console.log) {
 
     const startupPath = windowsStartupEntryPath()
     fs.mkdirSync(path.dirname(startupPath), { recursive: true })
-    // Write resolvedCommand, not fullCommand: the backslash-escaped quotes in
-    // fullCommand are for passing a single argument to schtasks. A .cmd file
-    // needs plain quoting and no cmd.exe wrapper -- it is already a batch file.
-    // CRLF because cmd.exe parses LF-only batch files unreliably.
-    const eol = String.fromCharCode(13, 10)
-    fs.writeFileSync(startupPath, `@echo off${eol}${resolvedCommand}${eol}`, 'utf8')
+    fs.writeFileSync(startupPath, launcher, 'utf8')
     log('Registered adb-bridge to start when you sign in to Windows (Startup folder).')
     return
   }
@@ -336,10 +393,12 @@ export async function removeBootEntry(log = console.log) {
     } catch {
       // No Scheduled Task registered.
     }
-    try {
-      fs.rmSync(windowsStartupEntryPath(), { force: true })
-    } catch {
-      // No Startup-folder entry either.
+    for (const file of [windowsStartupEntryPath(), windowsStartupEntryPath(WINDOWS_VISIBLE_STARTUP_FILE), windowsHiddenLauncherPath()]) {
+      try {
+        fs.rmSync(file, { force: true })
+      } catch {
+        // Not there.
+      }
     }
     log('Removed adb-bridge from Windows startup.')
     return
