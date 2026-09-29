@@ -96,14 +96,14 @@ export function shouldSkipUpdateCheck(options = {}) {
 export function runLatestBridge(argv = []) {
   let command
   try {
-    command = nodeToolCommand('npx', ['-y', `${PACKAGE_NAME}@latest`, ...argv])
+    command = nodeToolCommand('npx', ['-y', `${PACKAGE_NAME}@latest`, ...argv], { [SKIP_UPDATE_ENV]: '1' })
   } catch {
     return { handedOff: false, status: null }
   }
   const result = spawnSync(command.command, command.args, {
     stdio: 'inherit',
     windowsHide: true,
-    env: { ...process.env, [SKIP_UPDATE_ENV]: '1' },
+    env: command.env,
   })
   return { handedOff: result.error == null && result.status !== null, status: result.status }
 }

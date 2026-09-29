@@ -19,8 +19,28 @@ const execFileAsync = promisify(execFile)
  * its command line names one of the known bridge packages.
  */
 
-// "adb bridge" with a space is the tray app's executable ("ADB Bridge.exe").
-const BRIDGE_COMMAND_LINE = /adb[- ]bridge|cifi-bridge|tracker-bridge/i
+/**
+ * Is this the command line of a bridge? Matched on the FILE NAME of an
+ * argument -- the bridge's own entry script or the tray executable -- never on
+ * a substring. The first version matched "adb-bridge" anywhere, and the
+ * clean-room test caught it stopping an unrelated server whose only link was
+ * living under a folder named adb-bridge-sandbox. A user's project folder
+ * called that would have had its dev server killed.
+ */
+const BRIDGE_SCRIPT = /^(?:adb-bridge|cifi-bridge|tracker-bridge|local-adb-bridge)\.[cm]?js$/i
+const BRIDGE_EXE = /^(?:adb-bridge-tray|ADB Bridge)\.exe$/i
+// Unix global installs run the bin link, which has no extension: .../bin/adb-bridge
+const BRIDGE_BIN_LINK = /[\\/]bin[\\/](?:adb-bridge|cifi-bridge|tracker-bridge|local-adb-bridge)$/i
+
+export function isBridgeCommandLine(commandLine) {
+  if (/[\\/](?:adb-bridge-tray|ADB Bridge)\.exe\b/i.test(commandLine)) return true
+  for (const match of String(commandLine).matchAll(/"([^"]*)"|'([^']*)'|(\S+)/g)) {
+    const token = match[1] ?? match[2] ?? match[3]
+    const name = token.split(/[\\/]/).pop()
+    if (BRIDGE_SCRIPT.test(name) || BRIDGE_EXE.test(name) || BRIDGE_BIN_LINK.test(token)) return true
+  }
+  return false
+}
 
 /**
  * Asks the port's ping endpoint who it is. Bridges older than this ping (and
@@ -121,7 +141,7 @@ export async function identifyPortOwner(port, host = '127.0.0.1') {
   const pid = await findListeningPid(port)
   if (pid === process.pid) return { kind: 'self' }
   const commandLine = pid ? await commandLineOf(pid) : ''
-  if (pid && BRIDGE_COMMAND_LINE.test(commandLine)) {
+  if (pid && isBridgeCommandLine(commandLine)) {
     const version = ping?.product === 'adb-bridge' && typeof ping.version === 'string' ? ping.version : null
     return { kind: 'bridge', pid, version }
   }

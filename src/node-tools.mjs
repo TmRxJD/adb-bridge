@@ -32,16 +32,36 @@ function bundledCliCandidates(tool) {
 }
 
 /**
+ * The environment for an npm/npx child: ours, with this node's folder first
+ * on PATH.
+ *
+ * Running npm-cli.js by absolute path is not enough on its own. npx starts the
+ * package it fetched through a `.cmd` shim that calls plain `node`, and npm
+ * runs install scripts the same way, so with node absent from PATH the child
+ * fails with "'node' is not recognized" -- found by the clean-room test of
+ * 0.6.0, where it broke the auto-update handoff on exactly the machines this
+ * file exists for.
+ */
+export function nodeToolEnv(base = process.env) {
+  const key = Object.keys(base).find(name => name.toUpperCase() === 'PATH') ?? 'PATH'
+  const nodeDir = path.dirname(process.execPath)
+  const env = { ...base }
+  env[key] = [nodeDir, base[key]].filter(Boolean).join(path.delimiter)
+  return env
+}
+
+/**
  * @param {'npm' | 'npx'} tool
  * @param {string[]} args
- * @returns {{ command: string, args: string[] }}
+ * @param {NodeJS.ProcessEnv} [env] Extra variables for the child.
+ * @returns {{ command: string, args: string[], env: NodeJS.ProcessEnv }}
  */
-export function nodeToolCommand(tool, args) {
+export function nodeToolCommand(tool, args, env = {}) {
   const cli = bundledCliCandidates(tool).find(candidate => fs.existsSync(candidate))
   if (!cli) {
     throw new Error(
       `Could not find ${tool} beside Node (${process.execPath}). Reinstall Node.js from https://nodejs.org -- it includes ${tool}.`,
     )
   }
-  return { command: process.execPath, args: [cli, ...args] }
+  return { command: process.execPath, args: [cli, ...args], env: nodeToolEnv({ ...process.env, ...env }) }
 }

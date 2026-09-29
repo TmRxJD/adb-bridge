@@ -23,8 +23,8 @@ const INSTALL_TIMEOUT_MS = 180_000
 
 /** Runs npm through the node already running us -- see node-tools.mjs for why. */
 function runNpm(args, options) {
-  const { command, args: full } = nodeToolCommand('npm', args)
-  return execFileAsync(command, full, { windowsHide: true, ...options })
+  const { command, args: full, env } = nodeToolCommand('npm', args)
+  return execFileAsync(command, full, { windowsHide: true, env, ...options })
 }
 
 /**
