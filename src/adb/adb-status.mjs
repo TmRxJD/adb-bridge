@@ -1,7 +1,6 @@
 import {
-  adbNotFoundMessage,
+  adbIsOnPath,
   normalizeAdbExecError,
-  probeAdbPathIssue,
   requireAdbExecutable,
 } from './adb-resolve.mjs'
 
@@ -62,24 +61,25 @@ function emptyDeviceFields() {
   }
 }
 
+/**
+ * `pathIssue` stays for sites that already read it, but it now means "can the
+ * bridge use adb", never "is adb on PATH": the bridge runs adb by absolute
+ * path, and a PATH warning sent users to fix something that was not broken.
+ */
 export async function probeHostAdbStatus(runAdb) {
-  const pathProbe = await probeAdbPathIssue()
-  if (pathProbe.issue === 'not-installed') {
+  let adbPath
+  try {
+    // Installs adb if it is missing, so a status check self-heals too.
+    adbPath = await requireAdbExecutable()
+  } catch (error) {
     return {
       ...emptyDeviceFields(),
       pathIssue: 'not-installed',
       onPath: false,
       adbPath: null,
-      error: adbNotFoundMessage(),
+      error: error instanceof Error ? error.message : String(error),
     }
   }
-
-  await requireAdbExecutable()
   const host = await getHostAdbStatus(runAdb)
-  return {
-    ...host,
-    pathIssue: pathProbe.issue,
-    onPath: pathProbe.onPath,
-    adbPath: pathProbe.adbPath,
-  }
+  return { ...host, pathIssue: 'none', onPath: await adbIsOnPath(), adbPath }
 }

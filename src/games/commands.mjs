@@ -1,4 +1,5 @@
 import { loadAllGameProfiles, userGamesDir } from './registry.mjs'
+import { canPrompt, pickGames } from './picker.mjs'
 import {
   bridgeIsConfigured,
   disableGame,
@@ -70,7 +71,7 @@ export function addGame(id, log = console.log) {
   if (hadBridge) {
     log(`Added ${profile.name} to your existing bridge (port ${profile.port}).`)
     log(`Now serving: ${enabled.join(', ')}.`)
-    log('Restart the bridge for it to pick this up.')
+    log('A running bridge picks this up within a few seconds -- no restart needed.')
   } else {
     log(`Enabled ${profile.name} (port ${profile.port}).`)
     log('Start it with `adb-bridge`.')
@@ -93,13 +94,13 @@ export function removeGame(id, log = console.log) {
   log(`Removed ${name}.`)
   log(
     remaining.length > 0
-      ? `Still serving: ${remaining.join(', ')}. Restart the bridge to apply.`
+      ? `Still serving: ${remaining.join(', ')}. A running bridge applies this within a few seconds.`
       : 'No games are enabled now; the bridge will serve nothing until you add one.',
   )
   return 0
 }
 
-/** @returns {number} Process exit code. */
+/** @returns {number | Promise<number>} Process exit code. */
 export function runGamesCommand(argv, log = console.log) {
   const [action, target] = argv
 
@@ -109,6 +110,7 @@ export function runGamesCommand(argv, log = console.log) {
       return listGames(log)
     case 'add':
       if (!target) {
+        if (canPrompt()) return pickGames({ log }).then(() => 0)
         log('Usage: adb-bridge games add <id>')
         return 1
       }

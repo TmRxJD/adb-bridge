@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { isAutoUpdateEnabled } from './bridge-config.mjs'
+import { nodeToolCommand } from './node-tools.mjs'
 
 /**
  * Which package to update from, taken from our own package.json.
@@ -72,24 +73,39 @@ export async function fetchLatestPublishedVersion(timeoutMs = DEFAULT_TIMEOUT_MS
  */
 export function shouldSkipUpdateCheck(options = {}) {
   if (options.noUpdate) return true
+  // The re-exec guard only stops the child re-checking at startup, which is
+  // what would loop. A periodic check in the child compares against the
+  // child's own (new) version, so it cannot loop and must still run -- or a
+  // bridge that updated once would never update again.
+  if (options.periodic) return false
   if (process.env[SKIP_UPDATE_ENV] === '1') return true
   if (process.env[LEGACY_SKIP_UPDATE_ENV] === '1') return true
   return false
 }
 
 /**
- * Re-run the bridge from the just-downloaded latest version, inheriting the terminal so the
- * user sees the normal first-run flow. Passes through the original CLI args and marks the
- * child so it does not re-check for updates.
- * @returns {boolean} true when the child ran (caller should exit afterwards)
+ * Re-run the bridge from the latest published version, inheriting the terminal so the user
+ * keeps watching the same window. Passes through the original CLI args and marks the child
+ * so it does not re-check at startup.
+ *
+ * npx runs through the node already running us, not `npx.cmd` off PATH: the launcher and
+ * the sign-in entry run node by absolute path, and PATH there often has no npx at all.
+ *
+ * @returns {{ handedOff: boolean, status: number | null }}
  */
 export function runLatestBridge(argv = []) {
-  const npx = process.platform === 'win32' ? 'npx.cmd' : 'npx'
-  const result = spawnSync(npx, ['-y', `${PACKAGE_NAME}@latest`, ...argv], {
+  let command
+  try {
+    command = nodeToolCommand('npx', ['-y', `${PACKAGE_NAME}@latest`, ...argv])
+  } catch {
+    return { handedOff: false, status: null }
+  }
+  const result = spawnSync(command.command, command.args, {
     stdio: 'inherit',
+    windowsHide: true,
     env: { ...process.env, [SKIP_UPDATE_ENV]: '1' },
   })
-  return result.status !== null || result.error == null
+  return { handedOff: result.error == null && result.status !== null, status: result.status }
 }
 
 /**
@@ -101,15 +117,19 @@ export function runLatestBridge(argv = []) {
  * so an offline machine starts normally.
  *
  * @param {{ currentVersion: string, argv?: string[], log?: (msg: string) => void,
- *   ask?: (question: string) => Promise<boolean>, noUpdate?: boolean }} params
- * @returns {Promise<boolean>} true when a handoff happened (caller should stop and exit)
+ *   ask?: (question: string) => Promise<boolean>, noUpdate?: boolean, periodic?: boolean,
+ *   beforeHandOff?: () => Promise<void> }} params
+ *   `beforeHandOff` releases what the new copy needs (the ports) before it starts.
+ * @returns {Promise<{ handedOff: boolean, status: number | null }>} On a handoff the child
+ *   has already run to completion; the caller should exit with `status`.
  */
 export async function maybeUpdateBridge(params) {
-  const { currentVersion, argv = [], log = console.log, ask, noUpdate } = params
-  if (shouldSkipUpdateCheck({ noUpdate })) return false
+  const { currentVersion, argv = [], log = console.log, ask, noUpdate, periodic, beforeHandOff } = params
+  const none = { handedOff: false, status: null }
+  if (shouldSkipUpdateCheck({ noUpdate, periodic })) return none
 
   const latest = await fetchLatestPublishedVersion()
-  if (!latest || compareVersions(latest, currentVersion) <= 0) return false
+  if (!latest || compareVersions(latest, currentVersion) <= 0) return none
 
   const autoUpdate = isAutoUpdateEnabled()
 
@@ -121,7 +141,7 @@ export async function maybeUpdateBridge(params) {
     if (!accepted) {
       log(`Update anytime with: npx ${PACKAGE_NAME}@latest`)
       log(`(Re-enable automatic updates with: npx ${PACKAGE_NAME} --auto-update)`)
-      return false
+      return none
     }
   } else {
     log('')
@@ -129,11 +149,11 @@ export async function maybeUpdateBridge(params) {
     log(`Turn this off anytime with: npx ${PACKAGE_NAME} --no-auto-update`)
   }
 
-  const handedOff = runLatestBridge(argv)
-  if (!handedOff) {
+  await beforeHandOff?.()
+  const result = runLatestBridge(argv)
+  if (!result.handedOff) {
     log('Automatic update failed to launch. Run this manually to update:')
     log(`  npx ${PACKAGE_NAME}@latest`)
-    return false
   }
-  return true
+  return result
 }

@@ -4,6 +4,7 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 import { configDir } from '../games/registry.mjs'
+import { nodeToolCommand } from '../node-tools.mjs'
 
 /**
  * Where uploader plugins live, and how they get there.
@@ -18,13 +19,17 @@ import { configDir } from '../games/registry.mjs'
  * that folder, which every install method can reach.
  */
 const execFileAsync = promisify(execFile)
-const IS_WINDOWS = process.platform === 'win32'
-const NPM = IS_WINDOWS ? 'npm.cmd' : 'npm'
 const INSTALL_TIMEOUT_MS = 180_000
+
+/** Runs npm through the node already running us -- see node-tools.mjs for why. */
+function runNpm(args, options) {
+  const { command, args: full } = nodeToolCommand('npm', args)
+  return execFileAsync(command, full, { windowsHide: true, ...options })
+}
 
 /**
  * npm package names only. The name comes from a game profile, which a user can
- * write, and reaches npm through a shell on Windows, so anything else is refused.
+ * write, and is handed to npm as an argument, so anything else is refused.
  */
 const PACKAGE_NAME = /^(?:@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*$/
 
@@ -45,7 +50,8 @@ function entryFromPackageDir(dir) {
 
 let globalRoot = null
 function npmGlobalRoot() {
-  globalRoot ??= execFileAsync(NPM, ['root', '-g'], { windowsHide: true, timeout: 15_000, shell: IS_WINDOWS })
+  globalRoot ??= Promise.resolve()
+    .then(() => runNpm(['root', '-g'], { timeout: 15_000 }))
     .then(({ stdout }) => String(stdout).trim() || null)
     .catch(() => null)
   return globalRoot
@@ -115,9 +121,8 @@ export async function installPlugin(name, log = console.log) {
   if (!isValidPluginName(name)) throw new Error(`"${name}" is not a valid package name.`)
   fs.mkdirSync(pluginsDir(), { recursive: true })
   log(`Installing upload support (${name})...`)
-  await execFileAsync(
-    NPM,
+  await runNpm(
     ['install', '--prefix', pluginsDir(), `${name}@latest`, '--no-audit', '--no-fund', '--loglevel=error'],
-    { windowsHide: true, timeout: INSTALL_TIMEOUT_MS, shell: IS_WINDOWS },
+    { timeout: INSTALL_TIMEOUT_MS },
   )
 }

@@ -22,7 +22,7 @@ export function privateNetworkCorsHeaders(req) {
 /**
  * @param {import('http').IncomingMessage} req
  * @param {import('http').ServerResponse} res
- * @param {{ version: string, protocol?: number, product?: string }} meta
+ * @param {{ version: string, protocol?: number, product?: string, game?: string }} meta
  * @returns {boolean} true if handled
  */
 export function handlePrivateNetworkHttp(req, res, meta) {
@@ -47,6 +47,11 @@ export function handlePrivateNetworkHttp(req, res, meta) {
         version: meta.version,
         protocol: meta.protocol,
         product: meta.product,
+        // Which game this port serves and which process serves it, so a second
+        // bridge starting up can tell "already running, reuse it" from "an
+        // older copy is squatting on the port, replace it" (port-owner.mjs).
+        game: meta.game,
+        pid: process.pid,
       }),
     )
     return true

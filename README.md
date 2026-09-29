@@ -15,8 +15,10 @@ anyone distributing a modified build must publish their changes.
 
 ## What it actually does
 
-- Talks to your device with `adb`, installing Google's official platform-tools
-  if you don't have them.
+- Talks to your device with `adb`. If there is no working adb, it downloads
+  Google's official platform-tools into `~/.local-adb-bridge` by itself -- no
+  admin rights, no PATH changes, nothing to install by hand. An adb that exists
+  but does not run is skipped rather than used.
 - Copies the game's save file to a temp location and serves the bytes to a
   local website over a WebSocket on `127.0.0.1`.
 - Optionally watches the save and re-sends it when the game writes.
@@ -120,7 +122,11 @@ link an account for a game that supports upload.
 
 ## Games
 
+Run `adb-bridge` with nothing enabled (or `adb-bridge setup` any time) and it
+asks which games to serve, then starts serving them.
+
 ```bash
+adb-bridge setup
 adb-bridge games list
 adb-bridge games add thetower
 adb-bridge games add cifi
@@ -129,7 +135,20 @@ adb-bridge games remove cifi
 
 Each enabled game gets its own local port, so its website connects the same way
 it always has. Running `add` when a bridge is already installed registers the
-game with that bridge rather than creating a second one.
+game with that bridge rather than creating a second one, and a running bridge
+starts or stops the game within a few seconds -- no restart.
+
+### Ports, restarts and updates
+
+- **Already running?** Starting `adb-bridge` again while a current copy is
+  serving just says so and exits; that copy keeps serving.
+- **An older bridge on the port** (an old `cifi-bridge` / `tracker-bridge`, or an
+  older adb-bridge) is stopped and replaced automatically. A process is only
+  stopped when the OS reports it owns the port *and* its command line names a
+  bridge; any other program on the port is reported, never touched.
+- **Updates** are checked at start and every 6 hours, and applied by handing off
+  to the newest release in the same window. `--no-auto-update` turns this off,
+  `--no-update` skips it for one run.
 
 ### Adding a game yourself
 

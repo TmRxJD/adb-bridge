@@ -373,7 +373,7 @@ function attachWebSocketHandlers(wss, ctx) {
             && !isPhysicalAppSavePath(result.remotePath)
           ) {
             throw new BridgeSaveNotFoundError(
-              `USB import refused a non-app save path (${result.remotePath}). Stop the bridge and run: npx tracker-bridge`,
+              `USB import refused a non-app save path (${result.remotePath}). Open ${profile.name} on the phone, save, then try again.`,
               result.deviceSerial,
             )
           }
@@ -506,9 +506,8 @@ export function startGameBridge(profile, options = {}) {
       reported = true
       if (error?.code === 'EADDRINUSE') {
         console.error(
-          `[${profile.id}] Port ${port} is already in use, so ${profile.name} was not started. `
-          + 'An older per-game bridge is probably still running -- close it, or uninstall it '
-          + 'now that adb-bridge serves this game.',
+          `[${profile.id}] Port ${port} is still in use, so ${profile.name} was not started. `
+          + 'Run `adb-bridge` again: it stops an older bridge holding the port by itself.',
         )
       } else {
         console.error(`[${profile.id}] server error:`, error?.message || error)
@@ -529,6 +528,15 @@ export function startGameBridge(profile, options = {}) {
     wss,
     port,
     ready,
-    close: () => new Promise(resolve => server.close(() => resolve())),
+    // server.close() alone waits for every open connection to end, and a site
+    // tab holds its socket open indefinitely -- so removing a game, or handing
+    // off to an update, would hang with the port still bound. Drop the clients.
+    close: () => new Promise(resolve => {
+      ctx.saveWatcher?.stop?.()
+      for (const client of wss.clients) client.terminate()
+      wss.close()
+      server.close(() => resolve())
+      server.closeAllConnections?.()
+    }),
   }
 }

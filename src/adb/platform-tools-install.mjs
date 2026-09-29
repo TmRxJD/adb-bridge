@@ -1,10 +1,9 @@
-import { execFile, spawn } from 'node:child_process'
+import { execFile } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { fileExists } from './adb-path.mjs'
-import { appendWindowsUserPath, ensureWindowsAdbOnUserPath, findWindowsAdbInstallDir } from '../ensure-user-path.mjs'
 
 const execFileAsync = promisify(execFile)
 
@@ -15,217 +14,102 @@ const DOWNLOAD_URLS = {
   linux: `${PLATFORM_TOOLS_BASE}/platform-tools-latest-linux.zip`,
 }
 
+/**
+ * Installs Android platform-tools into the bridge's own folder.
+ *
+ * Google's zip is the primary route, not a last resort, because it is the only
+ * one that needs nothing from the user: no admin rights, no sudo password, no
+ * package manager, no PATH edit, and no new terminal afterwards. The old order
+ * tried winget / Homebrew / apt first. winget "succeeded" while leaving adb
+ * somewhere the bridge did not look, apt stopped at a sudo prompt nobody could
+ * see when the bridge ran at sign-in, and every route finished by editing PATH
+ * -- which the bridge never needed, since it runs adb by absolute path.
+ */
+
 export function bundledPlatformToolsRoot() {
   return path.join(os.homedir(), '.local-adb-bridge', 'platform-tools')
 }
 
 export function bundledAdbPath() {
-  const root = bundledPlatformToolsRoot()
-  return path.join(root, 'platform-tools', process.platform === 'win32' ? 'adb.exe' : 'adb')
+  return path.join(bundledPlatformToolsRoot(), 'platform-tools', process.platform === 'win32' ? 'adb.exe' : 'adb')
 }
 
-async function commandExists(command) {
-  try {
-    if (process.platform === 'win32') {
-      await execFileAsync('where', [command], { timeout: 5_000, windowsHide: true })
-    } else {
-      await execFileAsync('which', [command], { timeout: 5_000 })
-    }
-    return true
-  } catch {
-    return false
-  }
-}
-
-async function runCommand(command, args, options = {}) {
-  const { timeout = 300_000, inheritStdio = false } = options
-  if (inheritStdio) {
-    await new Promise((resolve, reject) => {
-      const child = spawn(command, args, { stdio: 'inherit', shell: false })
-      const timer = setTimeout(() => {
-        child.kill()
-        reject(new Error(`Timed out running ${command}`))
-      }, timeout)
-      child.on('error', reject)
-      child.on('close', code => {
-        clearTimeout(timer)
-        if (code === 0) resolve()
-        else reject(new Error(`${command} exited with code ${code}`))
-      })
-    })
-    return
-  }
-
-  await execFileAsync(command, args, {
-    timeout,
-    windowsHide: true,
-    maxBuffer: 8 * 1024 * 1024,
-  })
-}
-
-async function wingetPlatformToolsInstalled() {
-  try {
-    const { stdout } = await execFileAsync(
-      'winget',
-      ['list', '--id', 'Google.PlatformTools', '--accept-source-agreements'],
-      { timeout: 60_000, windowsHide: true },
-    )
-    return /Google\.PlatformTools/i.test(stdout)
-  } catch {
-    return false
-  }
-}
-
-async function installWithWinget(log, { force = false } = {}) {
-  const installed = await wingetPlatformToolsInstalled()
-  if (!installed || force) {
-    const args = [
-      'install',
-      '-e',
-      '--id',
-      'Google.PlatformTools',
-      '--accept-package-agreements',
-      '--accept-source-agreements',
-      '--disable-interactivity',
-    ]
-    if (force) {
-      args.push('--force')
-    }
-    log(
-      force
-        ? 'Repairing Android Platform Tools with winget...'
-        : 'Installing Android Platform Tools with winget...',
-    )
-    await runCommand('winget', args, { timeout: 600_000 })
-  } else {
-    log('Android Platform Tools already installed via winget. Ensuring adb is on your PATH...')
-  }
-  await ensureWindowsAdbOnUserPath(log)
-}
-
-async function installWithBrew(log) {
-  log('Installing Android Platform Tools with Homebrew...')
-  if (await commandExists('adb')) {
-    return
-  }
-  const listed = await commandExists('brew')
-    ? await execFileAsync('brew', ['list', 'android-platform-tools'], { timeout: 60_000 }).then(() => true).catch(() => false)
-    : false
-  if (listed) {
-    log('Reinstalling android-platform-tools with Homebrew...')
-    await runCommand('brew', ['reinstall', 'android-platform-tools'], { timeout: 600_000, inheritStdio: true })
-    return
-  }
-  await runCommand('brew', ['install', 'android-platform-tools'], { timeout: 600_000, inheritStdio: true })
-}
-
-async function installWithApt(log) {
-  if (!(await commandExists('apt-get'))) {
-    throw new Error('apt-get is not available on this system.')
-  }
-  log('Installing android-tools-adb with apt (sudo may prompt for your password)...')
-  await runCommand('sudo', ['apt-get', 'update'], { timeout: 300_000, inheritStdio: true })
-  await runCommand('sudo', ['apt-get', 'install', '-y', 'android-tools-adb'], {
-    timeout: 600_000,
-    inheritStdio: true,
-  })
-}
-
-async function downloadFile(url, destination) {
-  const response = await fetch(url)
+async function download(url, destination) {
+  const response = await fetch(url, { signal: globalThis.AbortSignal.timeout(180_000) })
   if (!response.ok) {
-    throw new Error(`Failed to download platform-tools (${response.status}).`)
+    throw new Error(`download from Google failed with HTTP ${response.status}`)
   }
   const bytes = Buffer.from(await response.arrayBuffer())
   await fs.promises.mkdir(path.dirname(destination), { recursive: true })
   await fs.promises.writeFile(destination, bytes)
 }
 
-async function extractZip(zipPath, destination) {
-  await fs.promises.mkdir(destination, { recursive: true })
+/**
+ * Extraction tools, in the order tried. Each is present by default on its
+ * platform, and a second one exists for the machines where the first is not:
+ * Windows 10 1803+ ships bsdtar as tar.exe, which reads zips; PowerShell covers
+ * older builds. Minimal Linux images often lack unzip but have python3.
+ */
+function extractors(zipPath, destination) {
   if (process.platform === 'win32') {
-    const escapedZip = zipPath.replace(/'/g, "''")
-    const escapedDest = destination.replace(/'/g, "''")
-    await execFileAsync(
-      'powershell',
-      [
-        '-NoProfile',
-        '-ExecutionPolicy',
-        'Bypass',
-        '-Command',
-        `Expand-Archive -LiteralPath '${escapedZip}' -DestinationPath '${escapedDest}' -Force`,
-      ],
-      { timeout: 300_000, windowsHide: true },
-    )
-    return
+    const quote = value => value.replace(/'/g, "''")
+    return [
+      ['tar', ['-xf', zipPath, '-C', destination]],
+      ['powershell', [
+        '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command',
+        `Expand-Archive -LiteralPath '${quote(zipPath)}' -DestinationPath '${quote(destination)}' -Force`,
+      ]],
+    ]
   }
-
-  await runCommand('unzip', ['-o', zipPath, '-d', destination], { timeout: 300_000 })
+  return [
+    ['unzip', ['-o', '-q', zipPath, '-d', destination]],
+    ['python3', ['-m', 'zipfile', '-e', zipPath, destination]],
+  ]
 }
 
-export async function installPlatformToolsZip(log) {
-  const platformKey =
-    process.platform === 'win32' ? 'win32' : process.platform === 'darwin' ? 'darwin' : 'linux'
-  const url = DOWNLOAD_URLS[platformKey]
-  const root = bundledPlatformToolsRoot()
-  const zipPath = path.join(root, 'download', 'platform-tools.zip')
-
-  log('Downloading Android Platform Tools from Google...')
-  await downloadFile(url, zipPath)
-  log('Extracting platform-tools...')
-  await fs.promises.rm(path.join(root, 'platform-tools'), { recursive: true, force: true }).catch(() => {})
-  await extractZip(zipPath, root)
-  await fs.promises.rm(path.dirname(zipPath), { recursive: true, force: true }).catch(() => {})
-
-  if (!fileExists(bundledAdbPath())) {
-    throw new Error('Downloaded platform-tools, but adb was not found in the extracted folder.')
+async function extract(zipPath, destination) {
+  const failures = []
+  for (const [command, args] of extractors(zipPath, destination)) {
+    try {
+      await execFileAsync(command, args, { timeout: 300_000, windowsHide: true })
+      return
+    } catch (error) {
+      failures.push(`${command}: ${error instanceof Error ? error.message.split('\n')[0] : error}`)
+    }
   }
-  if (process.platform === 'win32') {
-    const bundledDir = path.dirname(bundledAdbPath())
-    await appendWindowsUserPath(bundledDir, log)
-  }
-  return bundledAdbPath()
+  throw new Error(`could not unpack the download (${failures.join('; ')})`)
 }
 
 export async function installPlatformTools(log = console.log) {
-  if (process.env.LOCAL_ADB_BRIDGE_SKIP_AUTO_INSTALL === '1') {
-    throw new Error('Automatic platform-tools install is disabled (LOCAL_ADB_BRIDGE_SKIP_AUTO_INSTALL=1).')
-  }
+  const platformKey = process.platform === 'win32' || process.platform === 'darwin' ? process.platform : 'linux'
+  const root = bundledPlatformToolsRoot()
+  const zipPath = path.join(root, 'download', 'platform-tools.zip')
+  // Extract beside the live copy and swap it in, so an interrupted install
+  // never leaves a half-unpacked folder where the working adb used to be.
+  const staging = path.join(root, 'staging')
 
-  if (process.platform === 'win32') {
-    const existingDir = findWindowsAdbInstallDir()
-    if (existingDir && fileExists(path.join(existingDir, 'adb.exe'))) {
-      await appendWindowsUserPath(existingDir, log)
-      log('Open a new PowerShell window for adb to be recognized, or run: adb devices')
-      return
-    }
-    if (await commandExists('winget')) {
-      try {
-        await installWithWinget(log)
-        return
-      } catch (error) {
-        log(`winget install failed (${error instanceof Error ? error.message : error}). Trying direct download...`)
-      }
-    }
-  }
+  log('Downloading Android platform-tools from Google (about 7 MB)...')
+  await download(DOWNLOAD_URLS[platformKey], zipPath)
 
-  if (process.platform === 'darwin' && (await commandExists('brew'))) {
-    try {
-      await installWithBrew(log)
-      return
-    } catch (error) {
-      log(`Homebrew install failed (${error instanceof Error ? error.message : error}). Trying direct download...`)
+  log('Unpacking platform-tools...')
+  await fs.promises.rm(staging, { recursive: true, force: true })
+  await fs.promises.mkdir(staging, { recursive: true })
+  try {
+    await extract(zipPath, staging)
+    const unpacked = path.join(staging, 'platform-tools')
+    const adb = path.join(unpacked, process.platform === 'win32' ? 'adb.exe' : 'adb')
+    if (!fileExists(adb)) {
+      throw new Error('the download did not contain adb')
     }
-  }
+    // python3's zipfile drops the executable bit that unzip would keep.
+    if (process.platform !== 'win32') await fs.promises.chmod(adb, 0o755)
 
-  if (process.platform === 'linux' && (await commandExists('apt-get'))) {
-    try {
-      await installWithApt(log)
-      return
-    } catch (error) {
-      log(`apt install failed (${error instanceof Error ? error.message : error}). Trying direct download...`)
-    }
+    const live = path.join(root, 'platform-tools')
+    await fs.promises.rm(live, { recursive: true, force: true })
+    await fs.promises.rename(unpacked, live)
+  } finally {
+    await fs.promises.rm(staging, { recursive: true, force: true }).catch(() => {})
+    await fs.promises.rm(path.dirname(zipPath), { recursive: true, force: true }).catch(() => {})
   }
-
-  await installPlatformToolsZip(log)
+  log(`Installed platform-tools to ${path.dirname(bundledAdbPath())}`)
 }

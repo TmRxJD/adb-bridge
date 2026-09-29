@@ -60,8 +60,9 @@ if not defined NODE_EXE (
   exit /b 1
 )
 
-rem --skip-intro serves immediately with no prompts: the installer already
-rem handled Node.js. --no-boot because registering autostart belongs to the
+rem --skip-intro skips the autostart tip: the installer already handled Node.js
+rem and offered sign-in startup. If no game is enabled yet the bridge still asks
+rem which to serve, in this window. --no-boot because registering autostart belongs to the
 rem installer's "start at sign-in" task, not to a manual start.
 set "BRIDGE_ARGS=%*"
 if "%BRIDGE_ARGS%"=="" set "BRIDGE_ARGS=--skip-intro --no-boot"
