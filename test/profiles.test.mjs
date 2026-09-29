@@ -3,6 +3,7 @@ import { test } from 'node:test'
 import { normalizeGameProfile } from '../src/games/profile-schema.mjs'
 import { findPortConflicts, loadAllGameProfiles } from '../src/games/registry.mjs'
 import { buildEmulatorPullPaths, buildUsbPullPaths } from '../src/save/device-paths.mjs'
+import { buildSuReadCommand, isPhysicalAppSavePath } from '../src/save/pull-save.mjs'
 
 const VALID = {
   id: 'mygame',
@@ -121,6 +122,21 @@ test('paths cover every package and filename, with no duplicates', () => {
   }
   // The legacy spelling is what some installs actually write.
   assert.ok(paths.some(p => p.endsWith('/PlayerInfo.dat')))
+})
+
+test('LDCloud root reads stay scoped to one quoted save path', () => {
+  assert.equal(
+    buildSuReadCommand('/data/user/0/com.TechTreeGames.TheTower/files/playerInfo.dat'),
+    "cat '/data/user/0/com.TechTreeGames.TheTower/files/playerInfo.dat' 2>/dev/null",
+  )
+  assert.equal(
+    buildSuReadCommand("/data/user/0/example/files/save'; touch /sdcard/pwned; '.dat"),
+    "cat '/data/user/0/example/files/save'\\''; touch /sdcard/pwned; '\\''.dat' 2>/dev/null",
+  )
+  assert.equal(
+    isPhysicalAppSavePath('su:/data/user/0/com.TechTreeGames.TheTower/files/playerInfo.dat'),
+    true,
+  )
 })
 
 test('a user profile overrides a built-in of the same id', () => {

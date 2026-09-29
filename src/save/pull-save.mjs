@@ -441,11 +441,14 @@ export async function probeRemoteSaveStamp(serial, remotePath, profile) {
   if (!serial || !remotePath) return null
   const statOf = file => `stat -c %y:%s ${shellQuote(file)} 2>/dev/null`
   const runAs = /^(?:run-as|staging-tmp):([^/]+)/.exec(remotePath)
+  const suPath = remotePath.startsWith('su:') ? remotePath.slice(3) : null
   let command
   if (runAs) {
     if (!profile) return null
     const chain = saveFilenamesFor(profile).map(name => statOf(`files/${name}`)).join(' || ')
     command = `run-as ${shellQuote(runAs[1])} sh -c ${shellQuote(chain)}`
+  } else if (suPath) {
+    command = `su -c ${shellQuote(statOf(suPath))}`
   } else {
     command = statOf(remotePath)
   }
@@ -494,6 +497,7 @@ export function isPhysicalAppSavePath(remotePath) {
   if (
     normalized.startsWith('run-as:')
     || normalized.startsWith('staging-tmp:')
+    || normalized.startsWith('su:')
     || normalized.startsWith('native:')
   ) {
     return true
@@ -644,6 +648,37 @@ async function pullViaRunAsAll(serial, packages, profile) {
   )
 }
 
+/**
+ * LDCloud grants root to individual apps while keeping adbd unprivileged. In that
+ * configuration `adb root` is refused but `adb shell su -c ...` is allowed.
+ */
+export function buildSuReadCommand(pathname) {
+  return `cat ${shellQuote(pathname)} 2>/dev/null`
+}
+
+async function pullViaSu(serial, packages, profile) {
+  for (const pkg of packages) {
+    for (const filename of saveFilenamesFor(profile)) {
+      for (const root of ['/data/data', '/data/user/0']) {
+        const pathname = `${root}/${pkg}/files/${filename}`
+        try {
+          const bytes = await runAdbBinary(
+            serial,
+            ['exec-out', 'su', '-c', buildSuReadCommand(pathname)],
+            60_000,
+          )
+          if (bytes?.byteLength > 0 && bytesLookLikeSaveFile(bytes)) {
+            return { remotePath: `su:${pathname}`, bytes }
+          }
+        } catch {
+          // Root unavailable or this package/path does not contain the save.
+        }
+      }
+    }
+  }
+  return null
+}
+
 export function pickLargestSaveCandidate(candidates) {
   if (!candidates?.length) return null
   return candidates.reduce((best, current) =>
@@ -668,6 +703,7 @@ async function discoverAndPullPhysical(serial, profile) {
   }
 
   await tryCollect(() => pullViaRunAsAll(serial, packages, profile))
+  await tryCollect(() => pullViaSu(serial, packages, profile))
 
   const officialPaths = buildOfficialAppSavePaths(packages, profile)
   for (const remotePath of officialPaths) {
@@ -721,6 +757,9 @@ async function discoverAndPullEmulator(serial, profile) {
   const packages = await discoverInstalledPackages(serial, profile)
   const runAsPull = await pullViaRunAsAll(serial, packages, profile)
   if (runAsPull) return runAsPull
+
+  const suPull = await pullViaSu(serial, packages, profile)
+  if (suPull) return suPull
 
   const rooted = await tryAdbRoot(serial)
   if (rooted) {
