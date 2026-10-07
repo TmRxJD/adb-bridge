@@ -39,6 +39,7 @@ export function handlePrivateNetworkHttp(req, res, meta) {
     res.writeHead(200, {
       ...cors,
       'Content-Type': 'application/json',
+      'Cache-Control': 'no-store',
     })
     res.end(
       JSON.stringify({
