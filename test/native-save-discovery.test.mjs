@@ -11,7 +11,7 @@ const tower = profiles.get('thetower')
 const payload = Buffer.from(JSON.stringify({ exported: true, padding: 'x'.repeat(100) }))
 
 async function fixture(t) {
-  const root = process.platform === 'win32' ? 'E:/AI/temp/adb-bridge-tests' : '/mnt/e/AI/temp/adb-bridge-tests'
+  const root = path.join(os.tmpdir(), 'adb-bridge-tests')
   await fs.mkdir(root, { recursive: true })
   const home = await fs.mkdtemp(path.join(root, 'native-'))
   t.after(() => fs.rm(home, { recursive: true, force: true }))
