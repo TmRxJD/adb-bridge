@@ -6,8 +6,8 @@
     "com.TechTreeGames.TheTower",
     "com.thetowergame"
   ],
-  "saveFilename": "playerInfo.dat",
-  "alternateSaveFilenames": ["PlayerInfo.dat"],
+  "saveFilename": "tool_export.json",
+  "alternateSaveFilenames": ["playerInfo.dat", "PlayerInfo.dat"],
   "allowedOrigins": [
     "https://the-tower-run-tracker.com",
     "https://www.the-tower-run-tracker.com",

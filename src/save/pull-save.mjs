@@ -437,15 +437,15 @@ function shellQuote(value) {
  *
  * @returns {Promise<string | null>}
  */
-export async function probeRemoteSaveStamp(serial, remotePath, profile) {
+export async function probeRemoteSaveStamp(serial, remotePath, profile, deps = {}) {
   if (!serial || !remotePath) return null
   const statOf = file => `stat -c %y:%s ${shellQuote(file)} 2>/dev/null`
-  const runAs = /^(?:run-as|staging-tmp):([^/]+)/.exec(remotePath)
+  const runAs = /^(?:run-as|staging-tmp):([^/]+)(?:\/(files\/[^/]+))?/.exec(remotePath)
   const suPath = remotePath.startsWith('su:') ? remotePath.slice(3) : null
   let command
   if (runAs) {
     if (!profile) return null
-    const chain = saveFilenamesFor(profile).map(name => statOf(`files/${name}`)).join(' || ')
+    const chain = runAs[2] ? statOf(runAs[2]) : saveFilenamesFor(profile).map(name => statOf(`files/${name}`)).join(' || ')
     command = `run-as ${shellQuote(runAs[1])} sh -c ${shellQuote(chain)}`
   } else if (suPath) {
     command = `su -c ${shellQuote(statOf(suPath))}`
@@ -453,7 +453,7 @@ export async function probeRemoteSaveStamp(serial, remotePath, profile) {
     command = statOf(remotePath)
   }
   try {
-    const out = await runAdb(serial, ['shell', command], ADB_PATH_PROBE_TIMEOUT_MS)
+    const out = await (deps.runAdb ?? runAdb)(serial, ['shell', command], ADB_PATH_PROBE_TIMEOUT_MS)
     const line = out.split(/\r?\n/).map(s => s.trim()).find(Boolean)
     // A stat line always ends in ":<size>"; anything else is an error message.
     return line && /:\d+$/.test(line) ? line : null
@@ -552,8 +552,8 @@ function buildOfficialAppSavePaths(packages, profile) {
 
 async function pullViaRunAs(serial, packages, profile) {
   const relPaths = saveFilenamesFor(profile).map(name => `files/${name}`)
-  for (const pkg of packages) {
-    for (const rel of relPaths) {
+  for (const rel of relPaths) {
+    for (const pkg of packages) {
       try {
         const bytes = await runAdbBinary(
           serial,
@@ -574,67 +574,43 @@ async function pullViaRunAs(serial, packages, profile) {
   return null
 }
 
-async function pullViaRunAsShell(serial, packages, profile) {
-  // One shell round trip that falls through every candidate name, instead of
-  // one adb invocation per name.
-  const catChain = saveFilenamesFor(profile)
-    .map(name => `cat ${shellQuote('files/' + name)} 2>/dev/null`)
-    .join(' || ')
-  for (const pkg of packages) {
-    try {
-      const bytes = await runAdbBinary(
-        serial,
-        [
-          'exec-out',
-          'run-as',
-          pkg,
-          'sh',
-          '-c',
-          catChain,
-        ],
-        60_000,
-      )
-      if (bytes?.byteLength > 0 && bytesLookLikeSaveFile(bytes)) {
-        return {
-          remotePath: `run-as:${pkg}/sh-cat`,
-          bytes,
+export async function pullViaRunAsShell(serial, packages, profile, deps = {}) {
+  const readBinary = deps.runAdbBinary ?? runAdbBinary
+  for (const name of saveFilenamesFor(profile)) {
+    const rel = `files/${name}`
+    for (const pkg of packages) {
+      try {
+        const bytes = await readBinary(
+          serial, ['exec-out', 'run-as', pkg, 'sh', '-c', `cat ${shellQuote(rel)} 2>/dev/null`], 60_000,
+        )
+        if (bytes?.byteLength > 0 && bytesLookLikeSaveFile(bytes)) {
+          return { remotePath: `run-as:${pkg}/${rel}`, bytes }
         }
+      } catch {
+        // Try the next package or fallback filename.
       }
-    } catch {
-      continue
     }
   }
   return null
 }
 
-async function pullViaRunAsStaging(serial, packages, profile) {
-  const copyChain = saveFilenamesFor(profile)
-    .map(name => `cp ${shellQuote('files/' + name)} ${shellQuote(STAGING_TMP_PATH)} 2>/dev/null`)
-    .join(' || ')
-  for (const pkg of packages) {
-    try {
-      await runAdb(
-        serial,
-        [
-          'shell',
-          'run-as',
-          pkg,
-          'sh',
-          '-c',
-          copyChain,
-        ],
-        30_000,
-      )
-      const bytes = await readViaShellCat(serial, STAGING_TMP_PATH)
-      await runAdb(serial, ['shell', 'rm', '-f', STAGING_TMP_PATH], 10_000).catch(() => {})
-      if (bytes) {
-        return {
-          remotePath: `staging-tmp:${pkg}`,
-          bytes,
-        }
+export async function pullViaRunAsStaging(serial, packages, profile, deps = {}) {
+  const run = deps.runAdb ?? runAdb
+  const read = deps.readViaShellCat ?? readViaShellCat
+  for (const name of saveFilenamesFor(profile)) {
+    const rel = `files/${name}`
+    for (const pkg of packages) {
+      try {
+        await run(serial, [
+          'shell', 'run-as', pkg, 'sh', '-c',
+          `cp ${shellQuote(rel)} ${shellQuote(STAGING_TMP_PATH)} 2>/dev/null`,
+        ], 30_000)
+        const bytes = await read(serial, STAGING_TMP_PATH)
+        await run(serial, ['shell', 'rm', '-f', STAGING_TMP_PATH], 10_000).catch(() => {})
+        if (bytes) return { remotePath: `staging-tmp:${pkg}/${rel}`, bytes }
+      } catch {
+        // Try the next package or fallback filename.
       }
-    } catch {
-      continue
     }
   }
   return null
@@ -657,8 +633,8 @@ export function buildSuReadCommand(pathname) {
 }
 
 async function pullViaSu(serial, packages, profile) {
-  for (const pkg of packages) {
-    for (const filename of saveFilenamesFor(profile)) {
+  for (const filename of saveFilenamesFor(profile)) {
+    for (const pkg of packages) {
       for (const root of ['/data/data', '/data/user/0']) {
         const pathname = `${root}/${pkg}/files/${filename}`
         try {
@@ -679,18 +655,25 @@ async function pullViaSu(serial, packages, profile) {
   return null
 }
 
-export function pickLargestSaveCandidate(candidates) {
+export function pickLargestSaveCandidate(candidates, profile) {
   if (!candidates?.length) return null
+  if (profile?.id === 'thetower') {
+    for (const filename of saveFilenamesFor(profile)) {
+      const preferred = candidates.filter(candidate => candidate.remotePath.split('/').at(-1) === filename)
+      if (preferred.length) return pickLargestSaveCandidate(preferred)
+    }
+  }
   return candidates.reduce((best, current) =>
     current.bytes.byteLength > best.bytes.byteLength ? current : best,
   )
 }
 
 /** Phone saves live in app storage; Downloads often has a stale small copy. */
-async function discoverAndPullPhysical(serial, profile) {
+export async function discoverAndPullPhysical(serial, profile, deps = {}) {
+  const io = { discoverInstalledPackages, pullViaRunAsAll, pullViaSu, tryPullPath, tryAdbRoot, findSavePaths, ...deps }
   const candidates = []
   const rejectedDownloadOnly = []
-  const packages = await discoverInstalledPackages(serial, profile)
+  const packages = await io.discoverInstalledPackages(serial, profile)
 
   const tryCollect = async puller => {
     const pulled = await puller()
@@ -702,24 +685,24 @@ async function discoverAndPullPhysical(serial, profile) {
     rejectedDownloadOnly.push(pulled)
   }
 
-  await tryCollect(() => pullViaRunAsAll(serial, packages, profile))
-  await tryCollect(() => pullViaSu(serial, packages, profile))
+  await tryCollect(() => io.pullViaRunAsAll(serial, packages, profile))
+  await tryCollect(() => io.pullViaSu(serial, packages, profile))
 
   const officialPaths = buildOfficialAppSavePaths(packages, profile)
   for (const remotePath of officialPaths) {
-    await tryCollect(() => tryPullPath(serial, remotePath))
+    await tryCollect(() => io.tryPullPath(serial, remotePath))
   }
 
-  const rooted = await tryAdbRoot(serial)
+  const rooted = await io.tryAdbRoot(serial)
   if (rooted) {
     for (const pkg of packages) {
       for (const filename of saveFilenamesFor(profile)) {
-        await tryCollect(() => tryPullPath(serial, `/data/data/${pkg}/files/${filename}`))
+        await tryCollect(() => io.tryPullPath(serial, `/data/data/${pkg}/files/${filename}`))
       }
     }
   }
 
-  const discovered = await findSavePaths(serial, profile, { includeDataData: rooted })
+  const discovered = await io.findSavePaths(serial, profile, { includeDataData: rooted })
   const sortedDiscovered = [...discovered]
     .filter(remotePath => isPhysicalAppSavePath(remotePath))
     .sort((a, b) => {
@@ -728,10 +711,10 @@ async function discoverAndPullPhysical(serial, profile) {
       return score(b) - score(a)
     })
   for (const remotePath of sortedDiscovered) {
-    await tryCollect(() => tryPullPath(serial, remotePath))
+    await tryCollect(() => io.tryPullPath(serial, remotePath))
   }
 
-  const best = pickLargestSaveCandidate(candidates)
+  const best = pickLargestSaveCandidate(candidates, profile)
   if (best) return best
 
   if (rejectedDownloadOnly.length > 0) {

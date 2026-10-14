@@ -201,3 +201,30 @@ one of the behaviours antivirus heuristics score as malware.
 npm install
 npm test
 ```
+
+### Verify official JSON upload parsing
+
+With Node 22.20 or newer, run the real Tower uploader against built SDK and
+platform packages. `--dependencies-root` points to an isolated npm installation
+containing Appwrite, Zod and the tracker language package. Dependency redirects
+apply only to this process; package files and `node_modules` are not edited.
+The fixture must produce one battle with tier 8, wave 1234 and 10 billion coins.
+
+```bash
+npm run verify:uploader:json -- \
+  --dependencies-root E:/verification/uploader-deps \
+  --sdk-root E:/verification/sdk/package \
+  --platform-root E:/verification/platform/package
+```
+
+After the updated platform is published, validate a fresh registry installation
+by omitting both prepared-package roots. This resolves the SDK actually installed
+for that platform. Optional expected-version flags pin a particular release;
+without them, future versions are judged by the same battle assertions.
+
+```bash
+npm run verify:uploader:json -- \
+  --dependencies-root E:/verification/fresh-uploader-deps \
+  --expect-sdk-version 0.11.1 \
+  --expect-platform-version 0.2.5
+```

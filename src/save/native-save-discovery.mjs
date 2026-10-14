@@ -29,7 +29,7 @@ function describeNativeHost(profile) {
     // The preferences plist a sandboxed app writes is the strongest
     // "this really is that game's container" signal.
     prefsPlist: `${nativeHost.macBundleId}.plist`,
-    saveFilenameLower: profile.saveFilename.toLowerCase(),
+    saveFilenamesLower: [...new Set([profile.saveFilename, ...(profile.alternateSaveFilenames || [])].map(name => name.toLowerCase()))],
     // Application Support layouts: bundle-id folder, or publisher/title.
     appSupportSubdirs:
       nativeHost.appSupportSubdirs?.length
@@ -79,51 +79,66 @@ function canonicalContainerDir(desc, home) {
 export function buildNativeHostSaveCandidates(profile, platform = process.platform) {
   const home = os.homedir()
   const candidates = []
-  const saveFilename = profile.saveFilename
+  const saveFilenames = [...new Set([profile.saveFilename, ...(profile.alternateSaveFilenames || [])])]
   const desc = describeNativeHost(profile)
 
-  // A game with no nativeHost block has no desktop install to look in; the
-  // Android emulator paths below still apply, since those are derived from the
-  // package id every profile has.
-  if (platform === 'darwin' && desc) {
-    const dataDir = path.join(canonicalContainerDir(desc, home), 'Data')
-    const dirs = [...containerSaveDirs(desc, dataDir), ...nonSandboxedSaveDirs(desc, home)]
-    for (const dir of dirs) {
-      candidates.push({ source: desc.label, absolutePath: path.join(dir, saveFilename) })
-    }
-  }
-
-  if (platform === 'win32') {
-    const localAppData = process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local')
-    // Windows Subsystem for Android installs the APK as an MSIX package; the
-    // publisher suffix is constant for WSA-sideloaded apps.
-    for (const pkg of profile.androidPackages) {
-      for (const tail of [[saveFilename], ['files', saveFilename]]) {
-        candidates.push({
-          source: 'Windows (app data)',
-          absolutePath: path.join(
-            localAppData, 'Packages', `${pkg}_8wekyb3d8bbwe`, 'LocalState', ...tail,
-          ),
-        })
+  for (const saveFilename of saveFilenames) {
+    // A game with no nativeHost block has no desktop install to look in; the
+    // Android emulator paths below still apply, since those are derived from the
+    // package id every profile has.
+    if (platform === 'darwin' && desc) {
+      const dataDir = path.join(canonicalContainerDir(desc, home), 'Data')
+      const dirs = [...containerSaveDirs(desc, dataDir), ...nonSandboxedSaveDirs(desc, home)]
+      for (const dir of dirs) {
+        candidates.push({ source: desc.label, absolutePath: path.join(dir, saveFilename) })
       }
     }
-  }
 
-  if (platform === 'linux') {
-    // Waydroid and Anbox expose the Android filesystem on the host, so the
-    // save sits at the same in-Android path under a container root.
-    const containerRoots = [
-      path.join(home, '.local', 'share', 'waydroid', 'data', 'media', '0'),
-      path.join(home, '.var', 'lib', 'waydroid', 'data', 'media', '0'),
-      path.join(home, 'anbox-data', 'data', 'media', '0'),
-      path.join('/var', 'lib', 'anbox', 'rootfs', 'data', 'media', '0'),
-    ]
-    for (const root of containerRoots) {
-      for (const pkg of profile.androidPackages) {
+    if (platform === 'win32') {
+      for (const segments of profile.nativeHost?.appSupportSubdirs || []) {
         candidates.push({
-          source: 'Linux (Waydroid/Anbox)',
-          absolutePath: path.join(root, 'Android', 'data', pkg, 'files', saveFilename),
+          source: 'Windows (Unity app data)',
+          absolutePath: path.join(home, 'AppData', 'LocalLow', ...segments, saveFilename),
         })
+      }
+      const localAppData = process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local')
+      // Windows Subsystem for Android installs the APK as an MSIX package; the
+      // publisher suffix is constant for WSA-sideloaded apps.
+      for (const pkg of profile.androidPackages) {
+        for (const tail of [[saveFilename], ['files', saveFilename]]) {
+          candidates.push({
+            source: 'Windows (app data)',
+            absolutePath: path.join(
+              localAppData, 'Packages', `${pkg}_8wekyb3d8bbwe`, 'LocalState', ...tail,
+            ),
+          })
+        }
+      }
+    }
+
+    if (platform === 'linux') {
+      const configHome = process.env.XDG_CONFIG_HOME || path.join(home, '.config')
+      for (const segments of profile.nativeHost?.appSupportSubdirs || []) {
+        candidates.push({
+          source: 'Linux (Unity app data)',
+          absolutePath: path.join(configHome, 'unity3d', ...segments, saveFilename),
+        })
+      }
+      // Waydroid and Anbox expose the Android filesystem on the host, so the
+      // save sits at the same in-Android path under a container root.
+      const containerRoots = [
+        path.join(home, '.local', 'share', 'waydroid', 'data', 'media', '0'),
+        path.join(home, '.var', 'lib', 'waydroid', 'data', 'media', '0'),
+        path.join(home, 'anbox-data', 'data', 'media', '0'),
+        path.join('/var', 'lib', 'anbox', 'rootfs', 'data', 'media', '0'),
+      ]
+      for (const root of containerRoots) {
+        for (const pkg of profile.androidPackages) {
+          candidates.push({
+            source: 'Linux (Waydroid/Anbox)',
+            absolutePath: path.join(root, 'Android', 'data', pkg, 'files', saveFilename),
+          })
+        }
       }
     }
   }
@@ -158,7 +173,7 @@ async function pathExists(target) {
 }
 
 /**
- * Resolve playerInfo.dat inside a directory, case-insensitively (macOS volumes are usually
+ * Resolve a profile save filename inside a directory, case-insensitively (macOS volumes are usually
  * case-insensitive, but Steam / external volumes may not be). Returns the real filename path.
  * @returns {Promise<string | null>}
  */
@@ -169,8 +184,11 @@ async function resolveSaveInDir(desc, dir) {
   } catch {
     return null
   }
-  const match = entries.find(name => name.toLowerCase() === desc.saveFilenameLower)
-  return match ? path.join(dir, match) : null
+  for (const preferred of desc.saveFilenamesLower) {
+    const match = entries.find(name => name.toLowerCase() === preferred)
+    if (match) return path.join(dir, match)
+  }
+  return null
 }
 
 /**
@@ -214,13 +232,13 @@ async function findUuidGameContainerDirs(desc, home) {
 }
 
 /**
- * Bounded, symlink-resolving, case-insensitive walk for playerInfo.dat under a tight set of
+ * Bounded, symlink-resolving, case-insensitive walk for profile save filenames under a tight set of
  * roots. Only runs when the known-path scan misses. Returns the first path that reads back as
  * a plausible save.
  * @param {string[]} roots
  * @returns {Promise<string | null>}
  */
-async function walkForSave(desc, roots) {
+export async function walkForSave(desc, roots) {
   const visited = new Set()
   const queue = roots.map(dir => ({ dir, depth: 0 }))
   while (queue.length > 0) {
@@ -240,12 +258,16 @@ async function walkForSave(desc, roots) {
     } catch {
       continue
     }
-    for (const entry of entries) {
-      const full = path.join(real, entry.name)
-      if (entry.name.toLowerCase() === desc.saveFilenameLower) {
+    for (const preferred of desc.saveFilenamesLower) {
+      for (const entry of entries) {
+        if (entry.name.toLowerCase() !== preferred) continue
+        const full = path.join(real, entry.name)
         const bytes = await readIfValidSave(full)
         if (bytes) return full
       }
+    }
+    for (const entry of entries) {
+      const full = path.join(real, entry.name)
       if ((entry.isDirectory() || entry.isSymbolicLink()) && depth < MAC_WALK_MAX_DEPTH) {
         queue.push({ dir: full, depth: depth + 1 })
       }
@@ -274,8 +296,9 @@ async function appSupportGameRoots(desc, home) {
  * non-sandboxed installs, then a bounded fallback walk.
  * @returns {Promise<{ source: string, absolutePath: string, bytes: Buffer } | null>}
  */
-async function discoverMacSave(desc, home) {
+async function discoverMacSave(desc, home, preferredFilename) {
   const uuidContainerDirs = await findUuidGameContainerDirs(desc, home)
+  desc = { ...desc, saveFilenamesLower: [preferredFilename] }
   const containerDataDirs = [
     path.join(canonicalContainerDir(desc, home), 'Data'),
     ...uuidContainerDirs.map(dir => path.join(dir, 'Data')),
@@ -321,7 +344,11 @@ export async function discoverNativeHostSave(profile, platform = process.platfor
     const desc = describeNativeHost(profile)
     // Android-only game: nothing on this Mac to find.
     if (!desc) return null
-    return discoverMacSave(desc, os.homedir())
+    for (const filename of desc.saveFilenamesLower) {
+      const found = await discoverMacSave(desc, os.homedir(), filename)
+      if (found) return found
+    }
+    return null
   }
   for (const candidate of buildNativeHostSaveCandidates(profile, platform)) {
     const bytes = await readIfValidSave(candidate.absolutePath)

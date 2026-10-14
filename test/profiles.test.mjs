@@ -65,7 +65,8 @@ test('both built-in games load and claim distinct ports', () => {
 
 test('built-in profiles keep the save filenames confirmed on real devices', () => {
   const { profiles } = loadAllGameProfiles()
-  assert.equal(profiles.get('thetower').saveFilename, 'playerInfo.dat')
+  assert.equal(profiles.get('thetower').saveFilename, 'tool_export.json')
+  assert.deepEqual([...profiles.get('thetower').alternateSaveFilenames], ['playerInfo.dat', 'PlayerInfo.dat'])
   assert.equal(profiles.get('cifi').saveFilename, 'DATA.text')
   // CIFI's rolling backup is a real second file, not a spelling variant.
   assert.deepEqual([...profiles.get('cifi').alternateSaveFilenames], ['CifiBackup.text'])
@@ -148,4 +149,20 @@ test('a user profile overrides a built-in of the same id', () => {
   )
   assert.equal(overridden.builtin, false)
   assert.equal(overridden.saveFilename, 'save.dat')
+})
+
+
+test('The Tower literal Android persistentDataPath prioritizes the official export with legacy fallbacks', () => {
+  const { profiles } = loadAllGameProfiles()
+  for (const build of [buildUsbPullPaths, buildEmulatorPullPaths]) {
+    const paths = build(profiles.get('thetower'))
+    const expected = [
+      '/storage/emulated/0/Android/data/com.TechTreeGames.TheTower/files/tool_export.json',
+      '/storage/emulated/0/Android/data/com.TechTreeGames.TheTower/files/playerInfo.dat',
+      '/storage/emulated/0/Android/data/com.TechTreeGames.TheTower/files/PlayerInfo.dat',
+    ]
+    const indices = expected.map(p => paths.indexOf(p))
+    assert.ok(indices.every(i => i >= 0))
+    assert.ok(indices[0] < indices[1] && indices[1] < indices[2])
+  }
 })
